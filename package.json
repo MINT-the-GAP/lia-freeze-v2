@@ -1,0 +1,12 @@
+{
+  "name": "lia-freeze",
+  "version": "0.0.1",
+  "description": "LiaScript submission link with state snapshot and freeze functionality",
+  "scripts": {
+    "build": "parcel build src/index.ts --dist-dir dist --no-scope-hoist"
+  },
+  "devDependencies": {
+    "parcel": "^2.16.4",
+    "typescript": "^5.4.0"
+  }
+}
