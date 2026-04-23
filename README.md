@@ -1,12 +1,20 @@
 <!--
 author:   MINT-the-GAP
-version:  0.0.1
+version:  1.0.0
 language: en
 narrator: US English Female
 edit: true
 comment:  LiaScript submission link with exact state logging and freeze functionality.
 
+import: https://cdn.jsdelivr.net/gh/LiaTemplates/JSXGraph@main/README.md
+
 script:   ./dist/index.js
+
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-canvas-ocr/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-coordinate/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-Mathe/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-orthography/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 
 @Abgabe
 <div class="lia-submit-box">
@@ -252,6 +260,51 @@ Describe what a plugin does in one sentence.
 [[___ ___]]
 
 @ADetails(2;Comprehension)
+
+## Quiz 5 — OCR
+$a)\;\;$ $2+1=$ [[  3  ]] @canvas
+
+@ADetails(1=BE;Normal)
+
+## Quiz 6 — Coordinates
+
+@CoordinateSystem(`xmin=-7;xmax=7;ymin=-5;ymax=5;width=800;id=A1`)
+
+@AxisLabel(`id=A1;xlabel=$x$;ylabel=$y$`)
+
+**Mark the point (1, 4) on the coordinate system.**
+
+@CreatePoint(`A1;A;1;4`,`<!--  -->`)
+
+@ADetails(BE=1;Coordinates)
+
+## Quiz 7 — Fractions
+
+Mark the fraction $\dfrac{2}{5}$ on the circle.
+
+@circleQuiz(2/5)
+
+@ADetails(1=BE;CircleQuiz)
+
+
+## Quiz 8 — Orthography
+
+Correct the spelling mistakes in the following sentence.
+
+@orthography(2,`The apel is red`,`The apple is red.`)
+
+@ADetails(1=BE;Orthography)
+
+## Quiz 9 — Marking
+
+Mark the text in red.
+
+<div class="markerquiz">
+@markred(RED)
+@TextmarkerQuiz
+</div>
+
+@ADetails(1=BE;Marker)
 
 ## Submit
 
