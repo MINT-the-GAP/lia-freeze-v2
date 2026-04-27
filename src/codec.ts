@@ -1,3 +1,6 @@
+// Encodes a SnapshotPayload to a gzip+base64url token and decodes it back.
+// Falls back to plain base64url if gzip produces a larger result.
+
 const GZIP_PREFIX = "gz:";
 
 function toBase64Url(str: string): string {

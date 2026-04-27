@@ -1,3 +1,5 @@
+// Captures the full student state (native quizzes + all MINT plugins) into a
+// SnapshotPayload, and restores it from a payload on the teacher's side.
 import { loadNativeState, sendRestoreEvent, TableName } from "./port";
 import { getCurrentHash } from "./url";
 

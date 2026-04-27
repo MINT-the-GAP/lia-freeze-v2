@@ -1,3 +1,5 @@
+// Entry point. Detects live vs. shared-link mode, boots the appropriate flow,
+// and wires hash-change handling, the abgabe slide, and the evaluation overlay.
 import { installPortIntercept } from "./port";
 import { captureSnapshot, restoreSnapshot, SnapshotPayload } from "./snapshot";
 import {
@@ -30,8 +32,6 @@ import {
   DeclaredSlide,
 } from "./evaluation";
 import { installF12Tracking, installTabTracking, getSecurityState } from "./security";
-
-// ── Window globals ────────────────────────────────────────────────────────────
 
 // ── Module state ──────────────────────────────────────────────────────────────
 

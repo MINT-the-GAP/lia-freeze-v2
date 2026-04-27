@@ -1,3 +1,6 @@
+// Tracks fraud signals: F12 (DevTools) opens and tab/window switches.
+// Counts are stored in the snapshot payload's sec field.
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = { f12: 0, tab: 0 };

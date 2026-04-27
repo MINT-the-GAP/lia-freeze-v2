@@ -80,10 +80,12 @@ The teacher opens the link and sees exactly what the student answered, with the 
 Add this import to the header of your LiaScript document:
 
 ``` markdown
-import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md
 ```
 
-Then use the macros below in your course.
+Then use the macros in your course.
+
+> **Note:** The course version must be at least 1 (`version: 1.0.0`). LiaScript only persists quiz state to IndexedDB for versioned courses — without it, the freeze snapshot will be empty.
 
 ---
 
@@ -163,7 +165,7 @@ Used by `@Auswertung` to compute the total score.
 
 ``` markdown
 <!--
-import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md
 -->
 
 # English Quiz
@@ -207,14 +209,6 @@ Describe the water cycle in your own words.
 
 @Auswertung(F12;Tab)
 ```
-
----
-
-## Live demo
-
-Try the plugin directly in LiaScript:
-
-https://liascript.github.io/course/?https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze/main/README.md
 
 ---
 

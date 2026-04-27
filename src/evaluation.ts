@@ -1,3 +1,5 @@
+// Parses @Auswertung / @ADetails / @Abgabe declarations from course markdown
+// and renders the scored evaluation slide shown to the teacher.
 import { SnapshotPayload } from "./snapshot";
 
 // ── Inline helper ─────────────────────────────────────────────────────────────

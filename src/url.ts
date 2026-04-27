@@ -1,3 +1,5 @@
+// Builds and parses the submission URL that embeds the snapshot token,
+// and persists/retrieves the token via sessionStorage between page loads.
 import { encodeToken, decodeToken } from "./codec";
 
 const PARAM_NAME = "submission";

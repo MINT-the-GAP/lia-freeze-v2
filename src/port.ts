@@ -1,17 +1,16 @@
+// Reads all native LiaScript quiz/survey/code/task state directly from the
+// course's IndexedDB (Dexie) and exposes sendRestoreEvent() to replay it into Elm.
+//
+// LiaScript uses Dexie with the course URL as the database name.
+// Each store (quiz, survey, code, task) holds records: { id, version, data }.
+// We open the DB and read all records, grouped by table and section id.
+
 declare global {
   interface Window {
     LIA: { send: (event: unknown) => void } & Record<string, unknown>;
   }
 }
 
-// Quiz state capture via LiaScript's IndexedDB.
-//
-// LiaScript uses Dexie with the course URL as the database name.
-// Each store (quiz, survey, code, task) holds records: { id, version, data }.
-// We open the DB and read all records, grouped by table and section id.
-//
-// Restore: send a fake "load" reply (reply:true, service:"db", cmd:"load")
-// directly to Elm via window.LIA.send so Elm restores the quiz state.
 
 export type TableName = "quiz" | "survey" | "code" | "task";
 
@@ -19,10 +18,6 @@ const TABLES: TableName[] = ["quiz", "survey", "code", "task"];
 
 // ---- IndexedDB helpers ----
 
-// Find the LiaScript course DB name by enumerating all IndexedDB databases.
-// LiaScript uses the raw course markdown URL as the DB name (param.readme from
-// its Elm init_ event). We identify it by looking for a DB that has a "quiz" store
-// and whose name matches the course URL embedded in window.location.search.
 async function findCourseDbName(): Promise<string> {
   // Compute the base course URL from the viewer query string (without submission token)
   let courseBase = "";
@@ -39,8 +34,7 @@ async function findCourseDbName(): Promise<string> {
   }
 
   // Use indexedDB.databases() to list all existing DBs and find the one
-  // whose name contains the course file path — LiaScript uses the resolved
-  // readme URL as the DB name, which may differ slightly from courseBase.
+  // whose name contains the course file path.
   try {
     const dbs = await indexedDB.databases();
 

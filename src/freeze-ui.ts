@@ -1,3 +1,6 @@
+// All DOM and CSS for the plugin: runtime styles, the freeze nav bar (teacher),
+// the live submit box helpers (student), and the content lock logic.
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type FreezeBarState = {
