@@ -103,14 +103,16 @@ function getOrCreateEvalContainer(): HTMLElement {
   el.style.cssText = [
     "display:none",
     "position:fixed",
-    "top:0",
-    "left:0",
-    "right:0",
-    "bottom:0",
+    "left:50%",
+    "transform:translateX(-50%)",
+    "width:min(920px,calc(100vw - 24px))",
+    "max-height:calc(100vh - 120px)",
     "overflow-y:auto",
     "z-index:9000",
-    "padding:4rem 1.5rem 3rem",
+    "padding:1.1rem 1.2rem",
     "box-sizing:border-box",
+    "border-radius:16px",
+    "box-shadow:0 10px 26px rgba(0,0,0,.14)",
     "background:rgb(var(--lia-submit-bg-rgb))",
     "color:var(--lia-submit-fg)",
     "border:1px solid var(--lia-submit-border-on-theme)",
@@ -132,12 +134,22 @@ function showEvalPlaceholder(): void {
   });
   const bar = document.getElementById("lia-freeze-bar");
   const barH = bar ? (bar as HTMLElement).offsetHeight : 64;
-  el.style.paddingTop = (barH + 24) + "px";
+  el.style.top = (barH + 12) + "px";
   el.style.display = "block";
+
+  // Hide the underlying LiaScript slide so the eval card appears alone.
+  const host = document.querySelector<HTMLElement>(
+    "main.lia-slide__content, .lia-content, main, article"
+  );
+  if (host) { host.style.opacity = "0"; host.style.pointerEvents = "none"; }
 }
 
 function hideEvalPlaceholder(): void {
   if (evalContainer) evalContainer.style.display = "none";
+  const host = document.querySelector<HTMLElement>(
+    "main.lia-slide__content, .lia-content, main, article"
+  );
+  if (host) { host.style.opacity = ""; host.style.pointerEvents = ""; }
 }
 
 // ── Freeze bar ────────────────────────────────────────────────────────────────
