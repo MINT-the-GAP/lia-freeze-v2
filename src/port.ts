@@ -43,7 +43,6 @@ async function findCourseDbName(): Promise<string> {
   // readme URL as the DB name, which may differ slightly from courseBase.
   try {
     const dbs = await indexedDB.databases();
-    console.log("[LIA-FREEZE] all IDB databases:", dbs.map(d => d.name));
 
     // First: exact match
     const exact = dbs.find(d => d.name === courseBase);
@@ -147,28 +146,21 @@ export async function loadNativeState(): Promise<{
   let db: IDBDatabase;
   try {
     db = await openCourseDb(dbName);
-  } catch (e) {
-    console.log("[LIA-FREEZE] IDB open failed:", e);
+  } catch {
     return empty;
   }
 
   try {
-    console.log("[LIA-FREEZE] IDB dbName:", dbName, "version:", db.version, "stores:", Array.from(db.objectStoreNames));
     const results = await Promise.all(
       TABLES.map(t => readAllFromStore(db, t))
     );
-    console.log("[LIA-FREEZE] IDB quiz records count:", results[0].length);
-    if (results[0].length > 0) console.log("[LIA-FREEZE] IDB first quiz record:", JSON.stringify(results[0][0]));
-    else console.log("[LIA-FREEZE] IDB quiz store EMPTY");
     db.close();
-    const out = {
+    return {
       quiz:   latestBySection(results[0]),
       survey: latestBySection(results[1]),
       code:   latestBySection(results[2]),
       task:   latestBySection(results[3]),
     };
-    console.log("[LIA-FREEZE] IDB native state:", JSON.stringify(out));
-    return out;
   } catch {
     db.close();
     return empty;

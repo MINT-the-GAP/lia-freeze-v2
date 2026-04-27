@@ -45,6 +45,7 @@ let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
 let frozenLink = "";
 let frozenName = "";
+let booted = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -183,16 +184,21 @@ function applyFrozenAbgabeValues(): void {
 }
 
 function installAbgabeRestoreObserver(): void {
-  new MutationObserver(() => {
+  const obs = new MutationObserver(() => {
     if (!frozenLink) return;
     const linkEl = document.getElementById("lia-link") as HTMLInputElement | null;
-    if (linkEl && !linkEl.value) applyFrozenAbgabeValues();
-  }).observe(document.body, { childList: true, subtree: true });
+    if (linkEl && !linkEl.value) {
+      applyFrozenAbgabeValues();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
 }
 
 // ── Hash change listener ──────────────────────────────────────────────────────
 
 function onHashChange(): void {
+  if (!booted) return;
   const hash = getCurrentHash();
   if (isEvalHash(hash)) {
     showEvalPlaceholder();
@@ -339,6 +345,7 @@ async function init(): Promise<void> {
   } else {
     await bootLiveMode();
   }
+  booted = true;
 }
 
 function safeBoot(): void {
