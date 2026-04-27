@@ -22,6 +22,7 @@ import {
   parseEvaluationOptions,
   parseDeclaredSlides,
   parseAbgabeHash,
+  parseSectionCount,
   parseEvaluationDeclarations,
   renderEvaluationSlide,
   DeclaredSlide,
@@ -36,6 +37,7 @@ let declaredSlides: DeclaredSlide[] = [];
 let evalDecl: ReturnType<typeof parseEvaluationDeclarations> = Object.create(null);
 let evalOptions: ReturnType<typeof parseEvaluationOptions> = { trackF12: false, trackTab: false };
 let abgabeHash = "";
+let sectionCount = 0;
 
 let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
@@ -52,7 +54,7 @@ function hashIndex(hash: string): number {
 }
 
 function totalSlides(): number {
-  return declaredSlides.length || 1;
+  return declaredSlides.filter(s => !s.vt).length || 1;
 }
 
 function isEvalHash(hash: string): boolean {
@@ -80,10 +82,11 @@ async function fetchCourseMarkdown(): Promise<string | null> {
 async function loadCourseDeclarations(): Promise<void> {
   const md = await fetchCourseMarkdown();
   if (!md) return;
-  evalOptions  = parseEvaluationOptions(md);
+  evalOptions    = parseEvaluationOptions(md);
   declaredSlides = parseDeclaredSlides(md);
-  abgabeHash   = parseAbgabeHash(md);
-  evalDecl     = parseEvaluationDeclarations(md);
+  abgabeHash     = parseAbgabeHash(md);
+  sectionCount   = parseSectionCount(md);
+  evalDecl       = parseEvaluationDeclarations(md);
 }
 
 // ── Evaluation placeholder ────────────────────────────────────────────────────
@@ -134,15 +137,19 @@ function hideEvalPlaceholder(): void {
 // ── Freeze bar ────────────────────────────────────────────────────────────────
 
 function refreshFreezeBar(): void {
-  const idx = hashIndex(getCurrentHash());
+  const hash = getCurrentHash();
+  const idx = hashIndex(hash);
   const total = totalSlides();
-  const current = declaredSlides[idx - 1];
+  const current = declaredSlides.find(s => s.h === hash);
+  const pos = current ? declaredSlides.indexOf(current) + 1 : idx;
+  const isFirst = pos <= 1;
+  const isLast  = pos >= total;
   setFreezeBarState({
     slideTitle: current?.t ?? "",
-    slidePos: idx + " / " + total,
-    canFirst: idx > 1,
-    canPrev:  idx > 1,
-    canNext:  idx < total,
+    slidePos: pos + " / " + total,
+    canFirst: !isFirst,
+    canPrev:  !isFirst,
+    canNext:  !isLast,
     canEval:  !!getEvalSlide(),
   });
 }
@@ -167,10 +174,21 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
   activePayload = payload;
   setPageFrozen(true, true);
 
+  function navSlide(delta: number): void {
+    hideEvalPlaceholder();
+    const hash = getCurrentHash();
+    const visibleSlides = declaredSlides.filter(s => !s.vt);
+    const cur = visibleSlides.findIndex(s => s.h === hash);
+    const next = cur >= 0
+      ? visibleSlides[Math.max(0, Math.min(visibleSlides.length - 1, cur + delta))]
+      : (delta < 0 ? visibleSlides[0] : visibleSlides[visibleSlides.length - 1]);
+    if (next) window.location.hash = next.h;
+  }
+
   installFreezeBar({
-    onFirst: () => { hideEvalPlaceholder(); window.location.hash = "#1"; },
-    onPrev:  () => { hideEvalPlaceholder(); window.location.hash = "#" + Math.max(1, hashIndex(getCurrentHash()) - 1); },
-    onNext:  () => { hideEvalPlaceholder(); window.location.hash = "#" + Math.min(totalSlides(), hashIndex(getCurrentHash()) + 1); },
+    onFirst: () => { hideEvalPlaceholder(); const first = declaredSlides.find(s => !s.vt); if (first) window.location.hash = first.h; },
+    onPrev:  () => navSlide(-1),
+    onNext:  () => navSlide(+1),
     onEval:  () => {
       const ev = getEvalSlide();
       if (ev) { window.location.hash = ev.h; showEvalPlaceholder(); }
@@ -224,9 +242,10 @@ async function bootLiveMode(): Promise<void> {
 async function doCreateLink(): Promise<void> {
   setLiveBarStatus("Creating submission link…");
   try {
-    // sectionCount: one section per declared slide, or fall back to 20 as safe upper bound
-    const sectionCount = declaredSlides.length || 20;
-    const snapshot = await captureSnapshot(sectionCount);
+    // Use the H1-H6 section count so IDB indices for all quiz types are covered.
+    // Fall back to declaredSlides length or 30 if declarations haven't loaded yet.
+    const count = sectionCount || declaredSlides.length || 30;
+    const snapshot = await captureSnapshot(count);
     const sec = getSecurityState();
 
     snapshot.sec = {

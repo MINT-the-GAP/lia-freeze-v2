@@ -107,22 +107,39 @@ const EVALUATION_TITLE = "Evaluation";
 export function parseDeclaredSlides(courseMarkdown: string): DeclaredSlide[] {
   const slides: DeclaredSlide[] = [];
   let hasEval = false;
+  let liaIdx = 0;      // counts ALL H1-H6 headers — matches LiaScript's URL hash numbering
+  let evalLiaIdx = 0;
 
   iterateNonFencedLines(courseMarkdown, line => {
     if (/^\s*@Auswertung(?:\s*\(([^)]*)\))?\s*$/.test(line)) {
       hasEval = true;
+      evalLiaIdx = liaIdx + 1; // evaluation slide is appended after the last real section
     }
-    const hm = line.match(/^(#{1,2})\s+(.+?)\s*$/);
-    if (hm) {
-      slides.push({ h: "#" + (slides.length + 1), t: normalizeSpace(hm[2]) });
+    if (/^#{1,6}\s+/.test(line)) {
+      liaIdx++;
+      const hm = line.match(/^(#{1,2})\s+(.+?)\s*$/);
+      if (hm) {
+        slides.push({ h: "#" + liaIdx, t: normalizeSpace(hm[2]) });
+      }
     }
   });
 
   if (hasEval) {
-    slides.push({ h: "#" + (slides.length + 1), t: EVALUATION_TITLE, vt: "evaluation" });
+    const evalH = "#" + (evalLiaIdx || liaIdx + 1);
+    slides.push({ h: evalH, t: EVALUATION_TITLE, vt: "evaluation" });
   }
 
   return slides;
+}
+
+// ── Section count (H1-H6, matching LiaScript IDB section numbering) ───────────
+
+export function parseSectionCount(courseMarkdown: string): number {
+  let count = 0;
+  iterateNonFencedLines(courseMarkdown, line => {
+    if (/^#{1,6}\s+/.test(line)) count++;
+  });
+  return count;
 }
 
 // ── @Abgabe hash ──────────────────────────────────────────────────────────────
@@ -133,7 +150,7 @@ export function parseAbgabeHash(courseMarkdown: string): string {
 
   iterateNonFencedLines(courseMarkdown, line => {
     if (found) return;
-    if (/^(#{1,2})\s+(.+?)\s*$/.test(line)) { slideCount++; return; }
+    if (/^#{1,6}\s+/.test(line)) { slideCount++; return; }
     if (/^\s*@Abgabe(?:\s*\([^)]*\))?\s*$/.test(line)) {
       found = "#" + Math.max(1, slideCount);
     }
@@ -237,10 +254,13 @@ function collectTasksFromSlideLines(lines: string[]): DeclaredTask[] {
       continue;
     }
 
-    // choice/matrix bullet block
-    if (/^\s*-\s+/.test(line) && /(\[\[|\[\()/.test(line)) {
+    // choice/matrix block — either "- [[ ]]" bullet or indented "    [[ ]]" / "    [( )]"
+    const isChoiceLine = (l: string) =>
+      (/^\s*-\s+/.test(l) && /(\[\[|\[\()/.test(l)) ||
+      /^\s{2,}\[[\[( ]/.test(l);
+    if (isChoiceLine(line)) {
       pushTask();
-      while (i + 1 < lines.length && /^\s*-\s+/.test(String(lines[i + 1] || ""))) i++;
+      while (i + 1 < lines.length && isChoiceLine(String(lines[i + 1] || ""))) i++;
       continue;
     }
 
@@ -304,7 +324,7 @@ export function parseEvaluationDeclarations(courseMarkdown: string): EvaluationD
     }
     if (inFence) continue;
 
-    if (/^(#{1,2})\s+/.test(line)) {
+    if (/^#{1,6}\s+/.test(line)) {
       if (current) slideLineGroups.push(current);
       current = [];
       continue;
@@ -389,45 +409,6 @@ function collectQuizElements(payload: SnapshotPayload): Array<{ hash: string; id
   return out;
 }
 
-// Collect plugin quiz outcomes as flat synthetic QuizElements (1 point each, no tag matching).
-// ortho: { [uid]: { solved: boolean, tries: number } }
-// mathe: { [uid]: { state: boolean[], meta: { solved: boolean, revealed: boolean } } }
-function collectPluginOutcomes(payload: SnapshotPayload): Outcome[] {
-  const out: Outcome[] = [];
-
-  for (const slide of payload.s) {
-    // orthography
-    const ortho = slide.ortho;
-    if (ortho && typeof ortho === "object") {
-      for (const uid of Object.keys(ortho)) {
-        const s = ortho[uid] as Record<string, unknown>;
-        if (!s || typeof s !== "object") continue;
-        const solved = !!(s["solved"] ?? (s as any).sv);
-        const tries = Number(s["tries"] ?? s["tr"] ?? 0);
-        if (solved) out.push("correct");
-        else if (tries > 0) out.push("wrong");
-        else out.push("");
-      }
-    }
-
-    // mathe (fraction/circle quiz)
-    const mathe = slide.mathe;
-    if (mathe && typeof mathe === "object") {
-      for (const uid of Object.keys(mathe)) {
-        const w = mathe[uid] as Record<string, unknown>;
-        if (!w || typeof w !== "object") continue;
-        const meta = w["meta"] as Record<string, unknown> | undefined;
-        if (!meta) continue;
-        if (meta["solved"]) out.push("correct");
-        else if (meta["revealed"]) out.push("resolved");
-        else out.push("");
-      }
-    }
-  }
-
-  return out;
-}
-
 export function buildEvaluationStats(
   payload: SnapshotPayload,
   evalDecl: EvaluationDeclarationMap
@@ -440,39 +421,24 @@ export function buildEvaluationStats(
   }
 
   const elements = collectQuizElements(payload);
-  const pluginOutcomes = collectPluginOutcomes(payload);
 
-  for (const { hash, idx, el } of elements) {
-    const decl = evalDecl[hash];
-    const task = decl?.tl[idx - 1];
-    const be = task ? task.be : 1;
-    const outcome = quizElementOutcome(el);
-
-    if (outcome === "correct") stats.correct += be;
-    else if (outcome === "wrong") stats.wrong += be;
-    else if (outcome === "resolved") stats.resolved += be;
-  }
-
-  // Plugin outcomes contribute to correct/wrong/resolved only.
-  // The declared total already includes plugin tasks via @ADetails/@circleQuiz etc.
-  // Only add to total as fallback when there are no declarations at all.
   if (stats.total > 0) {
-    for (const outcome of pluginOutcomes) {
-      if (outcome === "correct") stats.correct += 1;
-      else if (outcome === "wrong") stats.wrong += 1;
-      else if (outcome === "resolved") stats.resolved += 1;
+    // Score native quiz elements against their declared task (which covers @circleQuiz /
+    // @orthography too — those macros emit [[!]] native quiz elements that are stored in IDB).
+    for (const { hash, idx, el } of elements) {
+      const decl = evalDecl[hash];
+      const task = decl?.tl[idx - 1];
+      const be = task ? task.be : 1;
+      const outcome = quizElementOutcome(el);
+      if (outcome === "correct") stats.correct += be;
+      else if (outcome === "wrong") stats.wrong += be;
+      else if (outcome === "resolved") stats.resolved += be;
     }
   } else {
-    // Fallback: no declarations — count everything including plugins
+    // Fallback: no declarations — count 1 point per native quiz element
     for (const { el } of elements) {
       stats.total += 1;
       const outcome = quizElementOutcome(el);
-      if (outcome === "correct") stats.correct += 1;
-      else if (outcome === "wrong") stats.wrong += 1;
-      else if (outcome === "resolved") stats.resolved += 1;
-    }
-    for (const outcome of pluginOutcomes) {
-      stats.total += 1;
       if (outcome === "correct") stats.correct += 1;
       else if (outcome === "wrong") stats.wrong += 1;
       else if (outcome === "resolved") stats.resolved += 1;

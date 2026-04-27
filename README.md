@@ -259,7 +259,7 @@ Describe what a plugin does in one sentence.
 
 [[___ ___]]
 
-@ADetails(2;Comprehension)
+@ADetails(0;Comprehension)
 
 ## Quiz 5 — OCR
 $a)\;\;$ $2+1=$ [[  3  ]] @canvas
