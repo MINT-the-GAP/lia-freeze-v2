@@ -76,6 +76,7 @@ export interface SnapshotPayload {
   sh: string;
   s: SlideState[];
   annot?: unknown;
+  n?: string;
   sec?: { trackF12: 0 | 1; trackTab: 0 | 1; f12: number; tab: number };
 }
 

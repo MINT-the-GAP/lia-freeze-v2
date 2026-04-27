@@ -28,6 +28,10 @@ export function injectRuntimeCSS(): void {
   --lia-course-bg: #ffffff;
   --lia-course-fg: #111111;
   --lia-course-border: rgba(0,0,0,.20);
+  --lia-submit-input-bg: #ffffff;
+  --lia-submit-input-fg: #111111;
+  --lia-submit-input-border: rgba(0,0,0,.20);
+  --lia-submit-placeholder: rgba(17,17,17,.65);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,6 +39,10 @@ export function injectRuntimeCSS(): void {
     --lia-course-bg: #1a1a1e;
     --lia-course-fg: #f3f3f3;
     --lia-course-border: rgba(255,255,255,.20);
+    --lia-submit-input-bg: #1f1f24;
+    --lia-submit-input-fg: #f3f3f3;
+    --lia-submit-input-border: rgba(255,255,255,.20);
+    --lia-submit-placeholder: rgba(243,243,243,.60);
   }
 }
 
@@ -89,7 +97,7 @@ export function injectRuntimeCSS(): void {
   padding: .78rem 1.05rem;
   border-radius: 10px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 2.25rem;
   font-weight: 700;
   background: var(--lia-submit-button-bg);
   color: var(--lia-submit-fg);
@@ -219,6 +227,14 @@ body.lia-snapshot-mode #lia-freeze-info { display: block !important; }
   user-select: text !important;
 }
 
+/* ── Static quiz freeze ── */
+.lia-frozen-static-quiz {
+  display: block;
+}
+.lia-frozen-static-quiz * {
+  pointer-events: none !important;
+}
+
 /* ── @ADetails scoring badges ── */
 .lia-adetails-points {
   display: inline-flex;
@@ -253,6 +269,54 @@ body.lia-shared-freeze-link .lia-frozen-scope .lia-adetails-award-input {
 `.trim();
 
   (document.head || document.documentElement).appendChild(style);
+}
+
+// ── Theme sync ────────────────────────────────────────────────────────────────
+
+export function applyCourseColors(): void {
+  const probe =
+    document.querySelector<Element>(".lia-slide.active .lia-slide__content") ??
+    document.querySelector<Element>(".lia-slide.current .lia-slide__content") ??
+    document.querySelector<Element>("main.lia-slide__content") ??
+    document.querySelector<Element>(".lia-content") ??
+    document.querySelector<Element>("main") ??
+    document.body;
+
+  let el: Element | null = probe;
+  let bg = "", fg = "";
+  while (el && el !== document.documentElement) {
+    const cs = getComputedStyle(el);
+    const b = cs.backgroundColor;
+    if (b && b !== "transparent" && b !== "rgba(0, 0, 0, 0)") { bg = b; fg = cs.color; break; }
+    el = el.parentElement;
+  }
+  if (!bg) {
+    bg = getComputedStyle(document.body).backgroundColor || "rgb(255,255,255)";
+    fg = getComputedStyle(document.body).color || "rgb(17,17,17)";
+  }
+
+  const nums = fg.match(/\d+(\.\d+)?/g) || [];
+  const border = nums.length >= 3 ? `rgba(${nums[0]},${nums[1]},${nums[2]},0.22)` : "rgba(0,0,0,0.22)";
+  const root = document.documentElement;
+  root.style.setProperty("--lia-course-bg", bg);
+  root.style.setProperty("--lia-course-fg", fg);
+  root.style.setProperty("--lia-course-border", border);
+}
+
+export function applyThemeColors(): void {
+  const raw = (getComputedStyle(document.body).getPropertyValue("--color-highlight") ||
+               getComputedStyle(document.documentElement).getPropertyValue("--color-highlight")).trim();
+  const nums = raw.match(/\d+(\.\d+)?/g) || [];
+  if (nums.length < 3) return;
+  const [r, g, b] = [Number(nums[0]), Number(nums[1]), Number(nums[2])];
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const bright = luminance > 160;
+  const root = document.documentElement;
+  root.style.setProperty("--lia-submit-bg-rgb", `${r}, ${g}, ${b}`);
+  root.style.setProperty("--lia-submit-fg", bright ? "#111111" : "#ffffff");
+  root.style.setProperty("--lia-submit-border-on-theme", bright ? "rgba(0,0,0,.24)" : "rgba(255,255,255,.34)");
+  root.style.setProperty("--lia-submit-button-bg", bright ? "rgba(255,255,255,.38)" : "rgba(255,255,255,.14)");
+  root.style.setProperty("--lia-submit-note-bg", bright ? "rgba(255,255,255,.30)" : "rgba(0,0,0,.14)");
 }
 
 // ── Freeze bar (shared-link / teacher mode) ───────────────────────────────────
@@ -381,11 +445,28 @@ export function setPageFrozen(frozen: boolean, isSharedLink = false): void {
   if (frozen) {
     const host = getContentHost();
     if (host) host.classList.add("lia-frozen-scope");
+    setTimeout(lockQuizElements, 120);
   } else {
     document.querySelectorAll(".lia-frozen-scope").forEach(el => {
       el.classList.remove("lia-frozen-scope");
     });
   }
+}
+
+function lockQuizElements(): void {
+  const host = getContentHost();
+  if (!host) return;
+  host.querySelectorAll<HTMLElement>(
+    "input, textarea, select, button, [role='button'], [contenteditable='true']"
+  ).forEach(el => {
+    if (el.closest("#lia-freeze-bar")) return;
+    if (el.closest(".lia-submit-box")) return;
+    if (el.closest(".lia-annot-toolbar")) return;
+    if (el.id === "lia-link" || el.id === "lia-copy-link") return;
+    try { (el as HTMLInputElement).disabled = true; } catch (_) {}
+    try { (el as HTMLInputElement).readOnly = true; } catch (_) {}
+    el.setAttribute("tabindex", "-1");
+  });
 }
 
 // Re-apply lia-frozen-scope after slide navigation (the content host is replaced).
@@ -396,6 +477,7 @@ export function reapplyContentLock(): void {
   });
   const host = getContentHost();
   if (host) host.classList.add("lia-frozen-scope");
+  setTimeout(lockQuizElements, 120);
 }
 
 // ── Live-mode helpers (wiring the @Abgabe slide DOM) ─────────────────────────

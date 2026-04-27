@@ -9,6 +9,8 @@ import {
 } from "./url";
 import {
   injectRuntimeCSS,
+  applyThemeColors,
+  applyCourseColors,
   installFreezeBar,
   setFreezeBarState,
   setPageFrozen,
@@ -41,6 +43,8 @@ let sectionCount = 0;
 
 let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
+let frozenLink = "";
+let frozenName = "";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -123,6 +127,7 @@ function showEvalPlaceholder(): void {
     payload: activePayload,
     evalDecl,
     title: evalSlide?.t,
+    name: activePayload.n,
   });
   const bar = document.getElementById("lia-freeze-bar");
   const barH = bar ? (bar as HTMLElement).offsetHeight : 64;
@@ -152,6 +157,37 @@ function refreshFreezeBar(): void {
     canNext:  !isLast,
     canEval:  !!getEvalSlide(),
   });
+}
+
+// ── Abgabe slide restore ──────────────────────────────────────────────────────
+
+function applyFrozenAbgabeValues(): void {
+  if (!frozenLink) return;
+  const nameEl  = document.getElementById("lia-name")        as HTMLInputElement | null;
+  const linkEl  = document.getElementById("lia-link")        as HTMLInputElement | null;
+  const btnEl   = document.getElementById("lia-create-link") as HTMLButtonElement | null;
+  const copyBtn = document.getElementById("lia-copy-link")   as HTMLButtonElement | null;
+  const noteEl  = document.getElementById("lia-frozen-note");
+
+  if (nameEl) { nameEl.value = frozenName; nameEl.disabled = true; }
+  if (btnEl)  { btnEl.disabled = true; btnEl.textContent = "Submission frozen"; }
+  if (linkEl) {
+    linkEl.value = frozenLink;
+    linkEl.disabled = false;
+    (linkEl as any).readOnly = true;
+    linkEl.style.pointerEvents = "auto";
+    linkEl.style.userSelect = "text";
+  }
+  if (copyBtn) copyBtn.disabled = !frozenLink;
+  if (noteEl)  noteEl.style.display = "block";
+}
+
+function installAbgabeRestoreObserver(): void {
+  new MutationObserver(() => {
+    if (!frozenLink) return;
+    const linkEl = document.getElementById("lia-link") as HTMLInputElement | null;
+    if (linkEl && !linkEl.value) applyFrozenAbgabeValues();
+  }).observe(document.body, { childList: true, subtree: true });
 }
 
 // ── Hash change listener ──────────────────────────────────────────────────────
@@ -255,9 +291,14 @@ async function doCreateLink(): Promise<void> {
       tab: sec.tab,
     };
 
-    const link = await buildLink(snapshot);
     const nameEl = document.getElementById("lia-name") as HTMLInputElement | null;
-    setLiveBarFrozen(link, nameEl?.value ?? "");
+    const nameVal = (nameEl?.value ?? "").trim();
+    if (nameVal) snapshot.n = nameVal;
+
+    const link = await buildLink(snapshot);
+    frozenLink = link;
+    frozenName = nameVal;
+    setLiveBarFrozen(link, nameVal);
 
     activePayload = snapshot;
     setPageFrozen(true, false);
@@ -270,6 +311,22 @@ async function doCreateLink(): Promise<void> {
 
 async function init(): Promise<void> {
   injectRuntimeCSS();
+  installAbgabeRestoreObserver();
+  applyThemeColors();
+  applyCourseColors();
+  new MutationObserver(() => { applyThemeColors(); applyCourseColors(); }).observe(document.documentElement, {
+    attributes: true, attributeFilter: ["class", "style", "data-theme"],
+  });
+  // Patch history.pushState/replaceState so LiaScript arrow navigation triggers onHashChange
+  const _push = history.pushState.bind(history);
+  const _replace = history.replaceState.bind(history);
+  history.pushState = function (...args) {
+    const r = _push(...args); onHashChange(); return r;
+  };
+  history.replaceState = function (...args) {
+    const r = _replace(...args); onHashChange(); return r;
+  };
+
   installPortIntercept();
 
   const token = getSubmissionToken();

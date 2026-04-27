@@ -573,10 +573,11 @@ export interface RenderEvaluationOptions {
   payload: SnapshotPayload;
   evalDecl: EvaluationDeclarationMap;
   title?: string;
+  name?: string;
 }
 
 export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
-  const { payload, evalDecl, title } = opts;
+  const { payload, evalDecl, title, name } = opts;
 
   const stats = buildEvaluationStats(payload, evalDecl);
   const tagStats = buildEvaluationStatsByTag(payload, evalDecl);
@@ -585,6 +586,10 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
   const sec = payload.sec;
   const f12Warning = sec?.trackF12 ? renderFraudWarning("f12", sec.f12) : "";
   const tabWarning = sec?.trackTab ? renderFraudWarning("tab", sec.tab) : "";
+
+  const subtitle = name
+    ? "Name: " + escapeHtml(name) + "<br>Summary of the frozen submission"
+    : "Summary of the frozen submission";
 
   const tagSection = tagStats.length
     ? [
@@ -602,7 +607,7 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
     '</div>',
 
     '<div style="margin-bottom:1rem;opacity:0.92;font-weight:700;">',
-      "Summary of the frozen submission",
+      subtitle,
     '</div>',
 
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.85rem;margin-bottom:1rem;">',
