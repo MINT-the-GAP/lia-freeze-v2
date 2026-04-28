@@ -80,9 +80,10 @@ export interface SnapshotPayload {
   annot?: unknown;
   n?: string;
   sec?: { trackF12: 0 | 1; trackTab: 0 | 1; f12: number; tab: number };
+  slideTimeMs?: Record<string, number>;
 }
 
-export const PAYLOAD_VERSION = "sf-mini-ti-3";
+export const PAYLOAD_VERSION = "sf-mini-ti-4";
 
 // ---- Native quiz state (port-accumulated, keyed globally by section index) ----
 

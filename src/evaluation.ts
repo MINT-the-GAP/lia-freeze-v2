@@ -21,6 +21,7 @@ function normalizeSpace(s: string): string {
 export interface EvaluationOptions {
   trackF12: boolean;
   trackTab: boolean;
+  trackTime: boolean;
 }
 
 export interface DeclaredSlide {
@@ -81,23 +82,25 @@ function iterateNonFencedLines(
 // ── @Auswertung option parsing ────────────────────────────────────────────────
 
 function parseMacroFlags(raw: string): EvaluationOptions {
-  const out: EvaluationOptions = { trackF12: false, trackTab: false };
+  const out: EvaluationOptions = { trackF12: false, trackTab: false, trackTime: false };
   normalizeSpace(raw).split(/[;,]/).forEach(flag => {
     const f = normalizeSpace(flag);
-    if (/^f12$/i.test(f)) out.trackF12 = true;
-    if (/^tab$/i.test(f)) out.trackTab = true;
+    if (/^f12$/i.test(f))   out.trackF12  = true;
+    if (/^tab$/i.test(f))   out.trackTab  = true;
+    if (/^time$/i.test(f))  out.trackTime = true;
   });
   return out;
 }
 
 export function parseEvaluationOptions(courseMarkdown: string): EvaluationOptions {
-  const out: EvaluationOptions = { trackF12: false, trackTab: false };
+  const out: EvaluationOptions = { trackF12: false, trackTab: false, trackTime: false };
   iterateNonFencedLines(courseMarkdown, line => {
     const m = line.match(/^\s*@Auswertung(?:\s*\(([^)]*)\))?\s*$/);
     if (!m) return;
     const flags = parseMacroFlags(m[1] || "");
-    if (flags.trackF12) out.trackF12 = true;
-    if (flags.trackTab) out.trackTab = true;
+    if (flags.trackF12)  out.trackF12  = true;
+    if (flags.trackTab)  out.trackTab  = true;
+    if (flags.trackTime) out.trackTime = true;
   });
   return out;
 }
@@ -576,6 +579,7 @@ export interface RenderEvaluationOptions {
   evalDecl: EvaluationDeclarationMap;
   title?: string;
   name?: string;
+  slides?: DeclaredSlide[];
 }
 
 export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
@@ -602,6 +606,34 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
         '</div>',
       ].join("")
     : "";
+
+  const slideTimeSection = (() => {
+    const times = payload.slideTimeMs;
+    if (!times || !Object.keys(times).length) return "";
+    const rows = Object.entries(times)
+      .sort((a, b) => parseInt(a[0].slice(1), 10) - parseInt(b[0].slice(1), 10))
+      .map(([h, ms]) => {
+        const slide = opts.slides?.find(s => s.h === h);
+        const label = slide ? escapeHtml(slide.t) : escapeHtml(h);
+        const totalSecs = Math.round(ms / 1000);
+        const display = totalSecs < 60
+          ? totalSecs + " sec"
+          : Math.floor(totalSecs / 60) + " min " + (totalSecs % 60) + " sec";
+        return '<div style="display:flex;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid var(--lia-course-border);">'
+          + '<span>' + label + '</span>'
+          + '<span style="font-weight:700;">' + escapeHtml(display) + '</span>'
+          + '</div>';
+      })
+      .join("");
+    return [
+      '<div style="margin-top:1.35rem;">',
+        '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.4rem;">Time per Slide</div>',
+        '<div style="border:1px solid var(--lia-course-border);border-radius:12px;padding:.6rem 1rem;">',
+          rows,
+        '</div>',
+      '</div>',
+    ].join("");
+  })();
 
   return [
     '<div style="font-weight:800;font-size:4.35rem;line-height:1.2;margin-bottom:.6rem;">',
@@ -632,5 +664,6 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
     f12Warning,
     tabWarning,
     tagSection,
+    slideTimeSection,
   ].join("");
 }

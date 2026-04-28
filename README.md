@@ -105,37 +105,34 @@ Place this on the final slide of your course. It renders the name field and link
 
 ### `@Auswertung` — Evaluation slide
 
-Place this on a dedicated evaluation slide. When the teacher opens the freeze link, this slide
+Place this at the end of your course. When the teacher opens the freeze link, this slide
 is rendered with all quiz answers scored automatically.
 
 Optionally track cheating attempts:
 
 ``` markdown
-## Evaluation
-
 @Auswertung
 ```
 
 ``` markdown
-## Evaluation
-
 @Auswertung(F12)
 ```
 
 ``` markdown
-## Evaluation
-
 @Auswertung(Tab)
 ```
 
 ``` markdown
-## Evaluation
-
 @Auswertung(F12;Tab)
+```
+
+``` markdown
+@Auswertung(F12;Tab;Time)
 ```
 
 - `F12` — flags if the student opened browser DevTools
 - `Tab` — flags if the student switched to another tab or window
+- `Time` — records how many minutes the student spent on each slide; shown on the evaluation slide
 
 ---
 
@@ -205,9 +202,7 @@ Describe the water cycle in your own words.
 
 @Abgabe
 
-## Evaluation
-
-@Auswertung(F12;Tab)
+@Auswertung(F12;Tab;Time)
 ```
 
 ---
@@ -256,9 +251,10 @@ Describe what a plugin does in one sentence.
 @ADetails(0;Comprehension)
 
 ## Quiz 5 — OCR
-$a)\;\;$ $2+1=$ [[  3  ]] @canvas
 
-@ADetails(1=BE;Normal)
+2 + 1 = [[ 3 ]] @canvas
+
+@ADetails(1=BE;OCR)
 
 ## Quiz 6 — Coordinates
 
@@ -279,7 +275,6 @@ Mark the fraction $\dfrac{2}{5}$ on the circle.
 @circleQuiz(2/5)
 
 @ADetails(1=BE;CircleQuiz)
-
 
 ## Quiz 8 — Orthography
 
@@ -304,6 +299,4 @@ Mark the text in red.
 
 @Abgabe
 
-## Evaluation
-
-@Auswertung(F12;Tab)
+@Auswertung(F12;Tab;Time)

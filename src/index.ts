@@ -37,7 +37,7 @@ import { installF12Tracking, installTabTracking, getSecurityState } from "./secu
 
 let declaredSlides: DeclaredSlide[] = [];
 let evalDecl: ReturnType<typeof parseEvaluationDeclarations> = Object.create(null);
-let evalOptions: ReturnType<typeof parseEvaluationOptions> = { trackF12: false, trackTab: false };
+let evalOptions: ReturnType<typeof parseEvaluationOptions> = { trackF12: false, trackTab: false, trackTime: false };
 let abgabeHash = "";
 let sectionCount = 0;
 
@@ -46,6 +46,29 @@ let evalContainer: HTMLElement | null = null;
 let frozenLink = "";
 let frozenName = "";
 let booted = false;
+
+// ── Slide time tracking ───────────────────────────────────────────────────────
+
+let slideTimeMs: Record<string, number> = {};
+let slideTimerStart = 0;
+let slideTimerHash = "";
+
+function stopCurrentSlideTimer(): void {
+  if (!slideTimerHash || !slideTimerStart) return;
+  const elapsed = Date.now() - slideTimerStart;
+  slideTimeMs[slideTimerHash] = (slideTimeMs[slideTimerHash] ?? 0) + elapsed;
+  slideTimerStart = 0;
+  slideTimerHash = "";
+}
+
+function startSlideTimer(hash: string): void {
+  slideTimerHash = hash;
+  slideTimerStart = Date.now();
+}
+
+function buildSlideTimeMs(): Record<string, number> {
+  return { ...slideTimeMs };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -131,6 +154,7 @@ function showEvalPlaceholder(): void {
     evalDecl,
     title: evalSlide?.t,
     name: activePayload.n,
+    slides: declaredSlides,
   });
   const bar = document.getElementById("lia-freeze-bar");
   const barH = bar ? (bar as HTMLElement).offsetHeight : 64;
@@ -138,18 +162,22 @@ function showEvalPlaceholder(): void {
   el.style.display = "block";
 
   // Hide the underlying LiaScript slide so the eval card appears alone.
-  const host = document.querySelector<HTMLElement>(
-    "main.lia-slide__content, .lia-content, main, article"
-  );
-  if (host) { host.style.opacity = "0"; host.style.pointerEvents = "none"; }
+  for (const sel of ["main.lia-slide__content, .lia-content, main, article", ".lia-submit-box"]) {
+    document.querySelectorAll<HTMLElement>(sel).forEach(el => {
+      el.style.opacity = "0";
+      el.style.pointerEvents = "none";
+    });
+  }
 }
 
 function hideEvalPlaceholder(): void {
   if (evalContainer) evalContainer.style.display = "none";
-  const host = document.querySelector<HTMLElement>(
-    "main.lia-slide__content, .lia-content, main, article"
-  );
-  if (host) { host.style.opacity = ""; host.style.pointerEvents = ""; }
+  for (const sel of ["main.lia-slide__content, .lia-content, main, article", ".lia-submit-box"]) {
+    document.querySelectorAll<HTMLElement>(sel).forEach(el => {
+      el.style.opacity = "";
+      el.style.pointerEvents = "";
+    });
+  }
 }
 
 // ── Freeze bar ────────────────────────────────────────────────────────────────
@@ -212,6 +240,7 @@ function installAbgabeRestoreObserver(): void {
 function onHashChange(): void {
   if (!booted) return;
   const hash = getCurrentHash();
+
   if (isEvalHash(hash)) {
     showEvalPlaceholder();
   } else {
@@ -262,10 +291,10 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
 
   // Determine where to navigate: prefer eval slide on shared links
   const ev = getEvalSlide();
-  const target = ev?.h ?? abgabeHash ?? payload.sh ?? "#1";
-
-  window.location.hash = target;
-  if (ev && target === ev.h) showEvalPlaceholder();
+  // Navigate to a real LiaScript slide (abgabe or last known), then overlay the eval card.
+  // The eval hash is virtual and unknown to LiaScript, so we never set it directly.
+  window.location.hash = abgabeHash || payload.sh || "#1";
+  if (ev) setTimeout(() => showEvalPlaceholder(), 300);
 
   refreshFreezeBar();
 }
@@ -285,7 +314,13 @@ async function bootLiveMode(): Promise<void> {
     },
   });
 
-  window.addEventListener("hashchange", () => { setTimeout(reapplyContentLock, 80); });
+  // Start timer immediately — before declarations load — so early navigation is captured.
+  startSlideTimer(getCurrentHash());
+  window.addEventListener("hashchange", () => {
+    stopCurrentSlideTimer();
+    startSlideTimer(getCurrentHash());
+    setTimeout(reapplyContentLock, 80);
+  });
 
   await loadCourseDeclarations();
 
@@ -296,6 +331,8 @@ async function bootLiveMode(): Promise<void> {
 async function doCreateLink(): Promise<void> {
   setLiveBarStatus("Creating submission link…");
   try {
+    stopCurrentSlideTimer();
+
     // Use the H1-H6 section count so IDB indices for all quiz types are covered.
     // Fall back to declaredSlides length or 30 if declarations haven't loaded yet.
     const count = sectionCount || declaredSlides.length || 30;
@@ -308,6 +345,11 @@ async function doCreateLink(): Promise<void> {
       f12: sec.f12,
       tab: sec.tab,
     };
+
+    if (evalOptions.trackTime) {
+      const times = buildSlideTimeMs();
+      if (Object.keys(times).length) snapshot.slideTimeMs = times;
+    }
 
     const nameEl = document.getElementById("lia-name") as HTMLInputElement | null;
     const nameVal = (nameEl?.value ?? "").trim();
