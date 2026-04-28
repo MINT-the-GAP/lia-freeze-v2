@@ -229,6 +229,12 @@ body.lia-snapshot-mode #lia-freeze-info { display: block !important; }
   cursor: text !important;
   user-select: text !important;
 }
+.lia-frozen-scope .lia-exam-name-input,
+.lia-frozen-scope .lia-exam-start-btn {
+  pointer-events: auto !important;
+  cursor: auto !important;
+}
+.lia-frozen-scope .lia-exam-start-btn { cursor: pointer !important; }
 
 /* ── Static quiz freeze ── */
 .lia-frozen-static-quiz {
@@ -236,6 +242,50 @@ body.lia-snapshot-mode #lia-freeze-info { display: block !important; }
 }
 .lia-frozen-static-quiz * {
   pointer-events: none !important;
+}
+
+/* ── Exam intro overlay ── */
+#lia-exam-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10000001;
+  overflow-y: auto;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  box-sizing: border-box;
+  background: var(--lia-course-bg);
+}
+
+/* ── Exam shake animation ── */
+@keyframes lia-exam-shake {
+  0%,100% { transform: translateX(0); }
+  20%      { transform: translateX(-8px); }
+  40%      { transform: translateX(8px); }
+  60%      { transform: translateX(-6px); }
+  80%      { transform: translateX(6px); }
+}
+
+/* ── Exam countdown widget ── */
+#lia-exam-countdown {
+  position: fixed;
+  right: 30px;
+  bottom: 5px;
+  z-index: 99995;
+  padding: .25rem .35rem;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  color: #c1121f;
+  background: color-mix(in srgb, #c1121f 8%, transparent);
+  border: 2px solid #c1121f;
+  pointer-events: none;
+  display: none;
+}
+@media (max-width: 700px) {
+  #lia-exam-countdown { right: 12px; bottom: 30px; }
 }
 
 /* ── @ADetails scoring badges ── */
@@ -465,6 +515,7 @@ function lockQuizElements(): void {
     if (el.closest("#lia-freeze-bar")) return;
     if (el.closest(".lia-submit-box")) return;
     if (el.closest(".lia-annot-toolbar")) return;
+    if (el.closest(".lia-exam-intro-virtual-slide")) return;
     if (el.id === "lia-link" || el.id === "lia-copy-link") return;
     try { (el as HTMLInputElement).disabled = true; } catch (_) {}
     try { (el as HTMLInputElement).readOnly = true; } catch (_) {}

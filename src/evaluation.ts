@@ -52,6 +52,12 @@ export interface ParsedCourse {
   abgabeHash: string;
 }
 
+export interface ExamConfig {
+  enabled: boolean;
+  durationMinutes: number;
+  triggerHash: string;
+}
+
 // ── Fence-aware line iterator ─────────────────────────────────────────────────
 
 function stripLeadingHeaderComment(src: string): string {
@@ -145,6 +151,28 @@ export function parseSectionCount(courseMarkdown: string): number {
     if (/^#{1,6}\s+/.test(line)) count++;
   });
   return count;
+}
+
+// ── @Exam config parsing ──────────────────────────────────────────────────────
+
+export function parseExamConfig(courseMarkdown: string): ExamConfig {
+  const out: ExamConfig = { enabled: false, durationMinutes: 0, triggerHash: "" };
+  let slideCount = 0;
+
+  iterateNonFencedLines(courseMarkdown, line => {
+    if (out.enabled) return;
+    if (/^#{1,6}\s+/.test(line)) { slideCount++; return; }
+    const m = line.trim().match(/^@Exam(?:\s*\(([^)]*)\))?\s*$/i);
+    if (!m) return;
+    const mins = Number(normalizeSpace(m[1] || "").replace(",", "."));
+    if (Number.isFinite(mins) && mins > 0) {
+      out.enabled = true;
+      out.durationMinutes = mins;
+      out.triggerHash = "#" + Math.max(1, slideCount);
+    }
+  });
+
+  return out;
 }
 
 // ── @Abgabe hash ──────────────────────────────────────────────────────────────

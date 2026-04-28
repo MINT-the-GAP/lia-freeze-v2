@@ -57,6 +57,10 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 <span class="lia-assignment-details" data-adetails="@0" style="display:none !important;"></span>
 @end
 
+@Exam
+<div class="lia-exam-macro-anchor" data-lia-exam-duration="@0" style="display:none;"></div>
+@end
+
 -->
 
 # LiaScript Freeze Plugin
@@ -136,6 +140,26 @@ Optionally track cheating attempts:
 
 ---
 
+### `@Exam(N)` — Exam / time-limit mode
+
+Place this on a dedicated intro slide. When the student navigates away from that slide for the first time, a countdown timer starts. When it hits zero, the plugin auto-freezes the submission and locks navigation to the Abgabe slide.
+
+``` markdown
+## Exam instructions
+
+@Exam(60)
+```
+
+- `N` — exam duration in minutes
+- The slide the macro appears on becomes the **intro slide**: the plugin overlays a red warning card showing the duration and a name input field
+- A "Time left: MM:SS" countdown widget is shown fixed at the bottom-right corner while the timer runs
+- When time runs out, `doCreateLink()` is called automatically and the student is redirected to the Abgabe slide
+- If the student opens the course already past the intro slide, the timer starts immediately
+
+> **Note:** `@Exam` only activates in live (student) mode — it has no effect on shared freeze links opened by the teacher.
+
+---
+
 ### `@ADetails` — Task scoring metadata
 
 Place this after a quiz block to assign point values and topic tags.
@@ -210,6 +234,8 @@ Describe the water cycle in your own words.
 ## Test slide
 
 The slides below let you test the plugin locally using `./dist/index.js`.
+
+@Exam(.5)
 
 ## Quiz 1 — Fill in the blanks
 

@@ -28,8 +28,10 @@ import {
   parseAbgabeHash,
   parseSectionCount,
   parseEvaluationDeclarations,
+  parseExamConfig,
   renderEvaluationSlide,
   DeclaredSlide,
+  ExamConfig,
 } from "./evaluation";
 import { installF12Tracking, installTabTracking, getSecurityState } from "./security";
 
@@ -46,6 +48,15 @@ let evalContainer: HTMLElement | null = null;
 let frozenLink = "";
 let frozenName = "";
 let booted = false;
+
+// ── Exam state ────────────────────────────────────────────────────────────────
+
+let examConfig: ExamConfig = { enabled: false, durationMinutes: 0, triggerHash: "" };
+let examTimerStartedAtMs = 0;
+let examTimerEndsAtMs = 0;
+let examLockToSubmission = false;
+let examTickInterval = 0;
+let examLockWatchInterval = 0;
 
 // ── Slide time tracking ───────────────────────────────────────────────────────
 
@@ -68,6 +79,222 @@ function startSlideTimer(hash: string): void {
 
 function buildSlideTimeMs(): Record<string, number> {
   return { ...slideTimeMs };
+}
+
+// ── Exam functions ────────────────────────────────────────────────────────────
+
+function getOrCreateCountdown(): HTMLElement {
+  let el = document.getElementById("lia-exam-countdown") as HTMLElement | null;
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "lia-exam-countdown";
+  document.body.appendChild(el);
+  return el;
+}
+
+function updateCountdownLayout(): void {
+  const el = document.getElementById("lia-exam-countdown") as HTMLElement | null;
+  if (!el) return;
+  const mobile = window.innerWidth <= 700;
+  el.style.right  = mobile ? "12px" : "30px";
+  el.style.bottom = mobile ? "30px" : "5px";
+}
+
+function tickExamTimer(): void {
+  if (!examConfig.enabled || examTimerStartedAtMs <= 0) {
+    getOrCreateCountdown().style.display = "none";
+    return;
+  }
+  const remainingMs = Math.max(0, examTimerEndsAtMs - Date.now());
+  const totalSecs   = Math.ceil(remainingMs / 1000);
+  const mm = String(Math.floor(totalSecs / 60)).padStart(2, "0");
+  const ss = String(totalSecs % 60).padStart(2, "0");
+  const el = getOrCreateCountdown();
+  el.textContent = "Time left: " + mm + ":" + ss;
+  el.style.display = "block";
+  updateCountdownLayout();
+
+  if (remainingMs <= 0) {
+    lockExamAndFreeze();
+  }
+}
+
+function startExamTimer(): void {
+  if (!examConfig.enabled) return;
+  if (document.body.classList.contains("lia-snapshot-mode")) return;
+  if (examLockToSubmission) return;
+  if (examTimerStartedAtMs > 0) return;
+  const mins = examConfig.durationMinutes;
+  if (!Number.isFinite(mins) || mins <= 0) return;
+
+  examTimerStartedAtMs = Date.now();
+  examTimerEndsAtMs    = examTimerStartedAtMs + Math.round(mins * 60000);
+
+  if (examTickInterval) clearInterval(examTickInterval);
+  examTickInterval = window.setInterval(tickExamTimer, 1000);
+  tickExamTimer();
+}
+
+function lockExamAndFreeze(): void {
+  if (!examConfig.enabled) return;
+  if (document.body.classList.contains("lia-snapshot-mode")) return;
+
+  examLockToSubmission = true;
+  if (examTickInterval) { clearInterval(examTickInterval); examTickInterval = 0; }
+  getOrCreateCountdown().style.display = "none";
+
+
+  // Navigate to the Abgabe slide and auto-freeze
+  if (abgabeHash) window.location.hash = abgabeHash;
+  void doCreateLink();
+
+  // Enforce lock: if student tries to navigate away, bounce back
+  if (!examLockWatchInterval) {
+    examLockWatchInterval = window.setInterval(() => {
+      if (!examLockToSubmission) return;
+      if (document.body.classList.contains("lia-snapshot-mode")) return;
+      const cur = getCurrentHash();
+      if (abgabeHash && cur !== abgabeHash) window.location.hash = abgabeHash;
+    }, 420);
+  }
+}
+
+function syncNameFields(): void {
+  const examEl = document.querySelector<HTMLInputElement>(".lia-exam-name-input");
+  const abgabeEl = document.getElementById("lia-name") as HTMLInputElement | null;
+  if (!examEl || !abgabeEl) return;
+  // Prefer the field that was most recently typed — use the non-empty value
+  const examVal   = examEl.value.trim();
+  const abgabeVal = abgabeEl.value.trim();
+  if (examVal && !abgabeVal)   { abgabeEl.value = examVal; }
+  if (abgabeVal && !examVal)   { examEl.value   = abgabeVal; }
+}
+
+function renderExamIntroCard(): HTMLElement {
+  const initialName = (() => {
+    const abgabeEl = document.getElementById("lia-name") as HTMLInputElement | null;
+    return abgabeEl?.value.trim() ?? "";
+  })();
+
+  const wrap = document.createElement("section");
+  wrap.className = "lia-exam-intro-virtual-slide";
+  wrap.style.cssText = [
+    "max-width:1200px",
+    "margin:0 auto",
+    "padding:1.5rem 1.6rem",
+    "border-radius:16px",
+    "border:1px solid color-mix(in srgb,#c1121f 55%,var(--lia-course-border) 45%)",
+    "background:color-mix(in srgb,#c1121f 10%,var(--lia-course-bg) 90%)",
+    "color:var(--lia-course-fg)",
+  ].join(";");
+
+  const dur = String(examConfig.durationMinutes);
+  wrap.innerHTML =
+    '<h1 style="font-size:8rem;font-weight:900;line-height:1.05;margin:0 0 .9rem 0;color:#c1121f;">Exam</h1>' +
+    '<p style="font-size:4.25rem;line-height:1.45;font-weight:700;margin:0;">Clicking "Start Exam" begins the working time of <strong><span style="color:#c1121f;">' +
+    dur + ' minutes</span></strong>.</p>' +
+    '<div style="margin-top:1.3rem;">' +
+      '<label style="display:block;font-size:4.25rem;font-weight:700;margin:0 0 .4rem 0;">Name</label>' +
+      '<input class="lia-exam-name-input" type="text" placeholder="Enter your name" value="' +
+      initialName.replace(/"/g, "&quot;") +
+      '" style="width:100%;box-sizing:border-box;padding:.6rem .75rem;border-radius:10px;' +
+      'border:1px solid color-mix(in srgb,#c1121f 35%,var(--lia-course-border) 65%);' +
+      'background:var(--lia-course-bg);color:var(--lia-course-fg);font-size:4rem;">' +
+    '</div>' +
+    '<button class="lia-exam-start-btn" type="button" style="margin-top:1.3rem;padding:.7rem 1.4rem;' +
+      'border-radius:10px;border:2px solid #c1121f;background:#c1121f;color:#fff;' +
+      'font-size:4rem;font-weight:800;cursor:pointer;">Start Exam</button>';
+
+  const input = wrap.querySelector<HTMLInputElement>(".lia-exam-name-input");
+  if (input) {
+    const onInput = () => syncNameFields();
+    input.addEventListener("input",  onInput);
+    input.addEventListener("change", onInput);
+  }
+
+  const btn = wrap.querySelector<HTMLButtonElement>(".lia-exam-start-btn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      const name = input?.value.trim() ?? "";
+      if (!name) {
+        if (input) {
+          input.style.animation = "none";
+          input.style.border = "2px solid #c1121f";
+          input.style.outline = "3px solid color-mix(in srgb,#c1121f 40%,transparent)";
+          void input.offsetWidth;
+          input.style.animation = "lia-exam-shake .35s ease";
+          input.focus();
+        }
+        return;
+      }
+      syncNameFields();
+      const nextHash = (() => {
+        const triggerIdx = parseInt(examConfig.triggerHash.slice(1), 10);
+        const visible = declaredSlides.filter(s => !s.vt);
+        const next = visible.find(s => parseInt(s.h.slice(1), 10) > triggerIdx);
+        return next?.h ?? ("#" + (triggerIdx + 1));
+      })();
+      window.location.hash = nextHash;
+    });
+  }
+
+  return wrap;
+}
+
+let _examOverlay: HTMLElement | null = null;
+
+function getOrCreateExamOverlay(): HTMLElement {
+  if (_examOverlay) return _examOverlay;
+  const el = document.createElement("div");
+  el.id = "lia-exam-overlay";
+  document.body.appendChild(el);
+  _examOverlay = el;
+  return el;
+}
+
+function showExamIntro(): void {
+  const el = getOrCreateExamOverlay();
+  el.innerHTML = "";
+  el.appendChild(renderExamIntroCard());
+  el.style.display = "flex";
+}
+
+function removeExamIntro(): void {
+  if (_examOverlay) _examOverlay.style.display = "none";
+}
+
+function updateExamForHash(hash: string, prevHash: string): void {
+  if (!examConfig.enabled) return;
+  if (document.body.classList.contains("lia-snapshot-mode")) return;
+
+  if (examLockToSubmission) {
+    if (abgabeHash && hash !== abgabeHash) {
+      setTimeout(() => { window.location.hash = abgabeHash; }, 0);
+    }
+    return;
+  }
+
+  // Guard: if leaving the intro slide without a name, bounce back immediately
+  if (
+    examTimerStartedAtMs <= 0 &&
+    examConfig.triggerHash &&
+    prevHash === examConfig.triggerHash &&
+    hash !== examConfig.triggerHash
+  ) {
+    const name = (document.querySelector<HTMLInputElement>(".lia-exam-name-input")?.value ?? "").trim();
+    if (!name) {
+      setTimeout(() => { window.location.hash = examConfig.triggerHash; }, 0);
+      return;
+    }
+    syncNameFields();
+    startExamTimer();
+  }
+
+  // Show/remove intro card
+  removeExamIntro();
+  if (hash === examConfig.triggerHash && examTimerStartedAtMs <= 0) {
+    setTimeout(showExamIntro, 180);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,6 +342,7 @@ async function loadCourseDeclarations(): Promise<void> {
   abgabeHash     = parseAbgabeHash(md);
   sectionCount   = parseSectionCount(md);
   evalDecl       = parseEvaluationDeclarations(md);
+  examConfig     = parseExamConfig(md);
 }
 
 // ── Evaluation placeholder ────────────────────────────────────────────────────
@@ -237,9 +465,13 @@ function installAbgabeRestoreObserver(): void {
 
 // ── Hash change listener ──────────────────────────────────────────────────────
 
+let _prevHash = "";
+
 function onHashChange(): void {
   if (!booted) return;
   const hash = getCurrentHash();
+  const prev = _prevHash;
+  _prevHash = hash;
 
   if (isEvalHash(hash)) {
     showEvalPlaceholder();
@@ -249,6 +481,8 @@ function onHashChange(): void {
   // Slide DOM is replaced on navigation — wait for render before re-locking.
   setTimeout(reapplyContentLock, 80);
   refreshFreezeBar();
+  updateExamForHash(hash, prev);
+  syncNameFields();
 }
 
 // ── Shared-link mode ──────────────────────────────────────────────────────────
@@ -315,17 +549,40 @@ async function bootLiveMode(): Promise<void> {
   });
 
   // Start timer immediately — before declarations load — so early navigation is captured.
-  startSlideTimer(getCurrentHash());
+  _prevHash = getCurrentHash();
+  startSlideTimer(_prevHash);
   window.addEventListener("hashchange", () => {
+    const prev = _prevHash;
+    const hash = getCurrentHash();
+    _prevHash = hash;
     stopCurrentSlideTimer();
-    startSlideTimer(getCurrentHash());
+    startSlideTimer(hash);
     setTimeout(reapplyContentLock, 80);
+    updateExamForHash(hash, prev);
+    syncNameFields();
   });
 
   await loadCourseDeclarations();
 
   if (evalOptions.trackF12) installF12Tracking();
   if (evalOptions.trackTab) installTabTracking();
+
+  // Exam init: only start timer if already past the intro slide.
+  // If on the intro slide, show the card.
+  if (examConfig.enabled) {
+    const cur = getCurrentHash();
+    if (cur === examConfig.triggerHash) {
+      setTimeout(showExamIntro, 180);
+    } else if (examTimerStartedAtMs <= 0) {
+      // Only auto-start if the student somehow landed past the intro slide
+      // (e.g. direct URL with a hash beyond the trigger).
+      const triggerIdx = parseInt(examConfig.triggerHash.slice(1), 10);
+      const curIdx     = parseInt((cur || "#1").slice(1), 10);
+      if (curIdx > triggerIdx) {
+        startExamTimer();
+      }
+    }
+  }
 }
 
 async function doCreateLink(): Promise<void> {
@@ -354,6 +611,10 @@ async function doCreateLink(): Promise<void> {
     const nameEl = document.getElementById("lia-name") as HTMLInputElement | null;
     const nameVal = (nameEl?.value ?? "").trim();
     if (nameVal) snapshot.n = nameVal;
+
+    // Stop exam countdown once submission is successfully created
+    if (examTickInterval) { clearInterval(examTickInterval); examTickInterval = 0; }
+    getOrCreateCountdown().style.display = "none";
 
     const link = await buildLink(snapshot);
     frozenLink = link;
