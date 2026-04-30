@@ -1,5 +1,5 @@
 {
-  "name": "lia-freeze",
+  "name": "lia-freeze-v2",
   "version": "0.0.1",
   "description": "LiaScript submission link with state snapshot and freeze functionality",
   "scripts": {
