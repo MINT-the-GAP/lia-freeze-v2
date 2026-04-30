@@ -68,6 +68,8 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 A LiaScript plugin that lets students freeze their quiz state into a shareable link.
 The teacher opens the link and sees exactly what the student answered, with the page locked.
 
+**Try it on LiaScript:** https://liascript.github.io/course/?https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md
+
 ---
 
 ## How it works
@@ -83,9 +85,7 @@ The teacher opens the link and sees exactly what the student answered, with the 
 
 Add this import to the header of your LiaScript document:
 
-``` markdown
-import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md
-```
+`import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md`
 
 Then use the macros in your course.
 
