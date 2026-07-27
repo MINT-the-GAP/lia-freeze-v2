@@ -1,6 +1,6 @@
 <!--
-author:   MINT-the-GAP
-version:  1.0.0
+author:   MINT-the-GAP, Martin Lommatzsch, Jihad Hyadi
+version:  2.1.0
 language: en
 narrator: US English Female
 edit: true
@@ -10,8 +10,11 @@ import: https://cdn.jsdelivr.net/gh/LiaTemplates/JSXGraph@main/README.md
 
 script:   ./dist/index.js
 
+
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-DynFlex/refs/heads/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-annotation/main/README.md
 import: https://raw.githubusercontent.com/MINT-the-GAP/lia-canvas-ocr/main/README.md
-import: https://raw.githubusercontent.com/MINT-the-GAP/lia-coordinate/main/README.md
+import: https://raw.githubusercontent.com/MINT-the-GAP/lia-coordinate/Proposal/README.md
 import: https://raw.githubusercontent.com/MINT-the-GAP/lia-Mathe/main/README.md
 import: https://raw.githubusercontent.com/MINT-the-GAP/lia-orthography/main/README.md
 import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
@@ -38,6 +41,15 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
       disabled
       onclick="window.__liaFreeze && window.__liaFreeze.copyLink(); return false;"
     >Copy Link</button>
+
+    <button
+      id="lia-print-pdf"
+      data-snapshot-admin="1"
+      type="button"
+      title="Open the print dialog and choose Save as PDF"
+      hidden
+      disabled
+    >Save course and evaluation as PDF</button>
   </div>
 
   <label for="lia-link">Submission Link</label>
@@ -78,6 +90,8 @@ The teacher opens the link and sees exactly what the student answered, with the 
 2. On the submission slide, they click **Create Link**
 3. The plugin encodes all quiz answers into the URL as a compressed token
 4. The teacher opens the link — answers are restored and the page is locked for review
+5. After freezing, **Save evaluation as PDF** opens a print-ready report with
+   student name, submission date, course title and the frozen course version
 
 ---
 
@@ -89,9 +103,6 @@ Add this import to the header of your LiaScript document:
 
 Then use the macros in your course.
 
-> **Note:** The course version must be at least 1 (`version: 1.0.0`). LiaScript only persists quiz state to IndexedDB for versioned courses — without it, the freeze snapshot will be empty.
-
----
 
 ## Macros
 
@@ -104,6 +115,14 @@ Place this on the final slide of your course. It renders the name field and link
 
 @Abgabe
 ```
+
+The PDF button appears only after a Freeze link has been created. It opens the
+browser print dialog; select **Save as PDF** there. The same print button is
+available in the navigation bar of an opened Freeze link. This decentralized
+report contains the complete evaluation, including current teacher corrections.
+Before opening the browser print dialog, the plugin visits and renders every
+course slide, converts Canvas content to printable images, and appends the
+evaluation as the final page.
 
 ---
 
@@ -134,15 +153,39 @@ Optionally track cheating attempts:
 @Auswertung(F12;Tab;Time)
 ```
 
-- `F12` — flags if the student opened browser DevTools
-- `Tab` — flags if the student switched to another tab or window
+``` markdown
+@Auswertung(F12;Tab;Time;Send)
+```
+
+- `F12` — records trusted DevTools-related shortcut candidates and stable,
+  calibrated viewport anomalies. Chrome, Edge and Brave use the Chromium
+  shortcut set; Firefox and Safari use their own documented macOS/desktop
+  shortcuts. The evaluation keeps shortcut, viewport and combined signals
+  separate. These are technical indicators, not proof that DevTools were
+  opened, and they never change quiz points. Opening tools through a menu or
+  context menu, undocked tools and remote inspection cannot be detected
+  reliably by a normal course page.
+- `Tab` — flags if the student switched to another tab or window. A confirmed,
+  intended `@Explain` overlay from an authored lia-mathpath integration is
+  narrowly excluded; a real hidden tab is always recorded. The evaluation
+  presents these as technical focus/visibility signals, not proof of misconduct.
 - `Time` — records how many minutes the student spent on each slide; shown on the evaluation slide
+- `Send` — turns every native **Check** action into a neutral submission while
+  the course is still live. Inputs continue to be recorded, but correctness
+  feedback and the solution control stay hidden. Creating the Freeze link then
+  checks the recorded quiz tasks behind a blocking submission screen. Only the
+  frozen course and the opened Freeze link show the resulting feedback. The
+  native solution control is available there without changing the score stored
+  in the Freeze payload. Every learner click on **Check** is counted per task
+  and stored in the Freeze link. The evaluation shows these counts, including
+  zero for untouched tasks; input changes, automatic Freeze grading and later
+  solution actions do not increase them.
 
 ---
 
 ### `@Exam(N)` — Exam / time-limit mode
 
-Place this on a dedicated intro slide. When the student navigates away from that slide for the first time, a countdown timer starts. When it hits zero, the plugin auto-freezes the submission and locks navigation to the Abgabe slide.
+Place this on a dedicated intro slide. Clicking **Start Exam** starts the countdown and immediately requests browser fullscreen while the click still has user activation. When the timer hits zero, the plugin auto-freezes the submission and locks navigation to the Abgabe slide.
 
 ``` markdown
 ## Exam instructions
@@ -152,9 +195,23 @@ Place this on a dedicated intro slide. When the student navigates away from that
 
 - `N` — exam duration in minutes
 - The slide the macro appears on becomes the **intro slide**: the plugin overlays a red warning card showing the duration and a name input field
+- The Start Exam button requests fullscreen in Chrome, Edge, Brave, Firefox and
+  Safari (including the older WebKit fallback). A denied or unavailable request
+  never blocks the exam and is reported neutrally in the frozen evaluation.
+- Leaving a confirmed fullscreen session during the active exam is stored in the
+  decentralized freeze link and shown separately in the evaluation; it does not
+  alter quiz points.
+- A trusted lia-mathpath `@Explain` hint is exempt only when the course really
+  imports lia-mathpath, contains an authored `[[?]] @Explain` hint, and the
+  expected same-page overlay is confirmed. Synthetic/look-alike links and actual
+  hidden-tab changes are not exempt. If the already rendered course is available
+  but its Markdown source cannot be fetched again, the fallback still requires
+  the exact MathPath link, quiz hierarchy, matching overlay/frame URL and a
+  trusted click before granting the same one-shot exemption.
 - A "Time left: MM:SS" countdown widget is shown fixed at the bottom-right corner while the timer runs
 - When time runs out, `doCreateLink()` is called automatically and the student is redirected to the Abgabe slide
-- If the student opens the course already past the intro slide, the timer starts immediately
+- If the course is opened past the intro slide, it redirects back to the intro;
+  only the explicit Start Exam action can begin the timed/fullscreen session.
 
 > **Note:** `@Exam` only activates in live (student) mode — it has no effect on shared freeze links opened by the teacher.
 
@@ -226,16 +283,11 @@ Describe the water cycle in your own words.
 
 @Abgabe
 
-@Auswertung(F12;Tab;Time)
+@Auswertung(F12;Tab;Time;Send)
 ```
 
 ---
 
-## Test slide
-
-The slides below let you test the plugin locally using `./dist/index.js`.
-
-@Exam(.5)
 
 ## Quiz 1 — Fill in the blanks
 
@@ -292,7 +344,7 @@ Describe what a plugin does in one sentence.
 
 @CreatePoint(`A1;A;1;4`,`<!--  -->`)
 
-@ADetails(BE=1;Coordinates)
+@ADetails(1;Coordinates)
 
 ## Quiz 7 — Fractions
 
@@ -300,15 +352,15 @@ Mark the fraction $\dfrac{2}{5}$ on the circle.
 
 @circleQuiz(2/5)
 
-@ADetails(1=BE;CircleQuiz)
+@ADetails(1;CircleQuiz)
 
 ## Quiz 8 — Orthography
 
 Correct the spelling mistakes in the following sentence.
 
-@orthography(2,`The apel is red`,`The apple is red.`)
+@orthography(`<!--  -->`,`The apel is red`,`The apple is red.`)
 
-@ADetails(1=BE;Orthography)
+@ADetails(1;Orthography)
 
 ## Quiz 9 — Marking
 
@@ -319,10 +371,558 @@ Mark the text in red.
 @TextmarkerQuiz
 </div>
 
-@ADetails(1=BE;Marker)
+@ADetails(1;Marker)
+
+
+
+## Quiz 10 — Inline selection
+
+Select a color: [[(Red)|Blue|Green]].
+
+@ADetails(1;InlineSelection)
+
+## Quiz 11 — Matrix
+
+Assign each number to its parity.
+
+- [[even] (odd)]
+- [ (X) ( ) ] 2
+- [ ( ) (X) ] 3
+
+@ADetails(2;Matrix)
+
+## Quiz 12 — Drag and drop
+
+Sky: [->[(blue)]], grass: [->[(green)]].
+
+@ADetails(2;DragDrop)
+
+## Quiz 13 — Generic
+
+Check the statement: water freezes at zero degrees Celsius.
+
+[[!]]
+<script>true</script>
+*************
+Water freezes at zero degrees Celsius.
+*************
+
+@ADetails(1;Generic)
+
+## Quiz 14 - DGS area
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$. Its area is 6.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=QuizDgsArea`)
+
+@DGS(`QuizDgsArea;tools=[200;510;920]`)
+
+@AreaQuiz(`QuizDgsArea;3;6;0.05`,`<!-- -->`)
+
+@ADetails(1;DGS-Area)
+
+## Quiz 15 - DGS perimeter
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$. Its perimeter is 12.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=QuizDgsPerimeter`)
+
+@DGS(`QuizDgsPerimeter;tools=[200;510;920]`)
+
+@PerimeterQuiz(`QuizDgsPerimeter;3;12;0.05`,`<!-- -->`)
+
+@ADetails(1;DGS-Perimeter)
+
+## Quiz 16 - DGS construction
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$. The quiz checks side 4, the following right angle, and the following side 3.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=QuizDgsConstruction`)
+
+@DGS(`QuizDgsConstruction;tools=[200;510;920]`)
+
+@ConstructionQuiz(`QuizDgsConstruction;3;fixed;Side4,Angle90,Side3;lengthTolerance=0.05;angleTolerance=1`,`<!-- -->`)
+
+@ADetails(1;DGS-Construction)
+
+## Quiz 17 - Combined DGS construction, area, and perimeter
+
+Construct the same counterclockwise 3-4-5 triangle. All three conditions must be fulfilled by the same learner-created polygon.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=QuizDgsCombined`)
+
+@DGS(`QuizDgsCombined;tools=[200;510;920]`)
+
+@KoordQuiz(`QuizDgsCombined;3;Konstruktion(fest;S4,W90,S3;streckentoleranz=0.05;winkeltoleranz=1);Flaeche(6;0.05);Umfang(12;0.05)`,`<!-- -->`)
+
+@ADetails(1;DGS-Combined)
+
+## All quiz types twice in flex children
+
+<section class="dynFlex">
+<div class="flex-child">
+
+**Text input A**
+
+France: [[Paris]].
+
+@ADetails(1;Flex-Textinput-A)
+
+</div>
+
+<div class="flex-child">
+
+**Text input B**
+
+Italy: [[Rome]].
+
+@ADetails(1;Flex-Textinput-B)
+
+</div>
+
+<div class="flex-child">
+
+**Free text A**
+
+Describe renewable energy.
+
+    [[___ ___]]
+
+@ADetails(0;Flex-Freetext-A)
+
+</div>
+
+<div class="flex-child">
+
+**Free text B**
+
+Explain photosynthesis.
+
+    [[___ ___]]
+
+@ADetails(0;Flex-Freetext-B)
+
+</div>
+
+<div class="flex-child">
+
+**Inline selection A**
+
+Select red: [[(Red)|Green|Black]].
+
+@ADetails(1;Flex-Inlineselection-A)
+
+</div>
+
+<div class="flex-child">
+
+**Inline selection B**
+
+Select a mammal: [[(Whale)|Trout|Eagle]].
+
+@ADetails(1;Flex-Inlineselection-B)
+
+</div>
+
+<div class="flex-child">
+
+**Multiple choice A**
+
+Select all even numbers.
+
+- [[X]] 2
+- [[ ]] 3
+- [[X]] 4
+
+@ADetails(1;Flex-Multiplechoice-A)
+
+</div>
+
+<div class="flex-child">
+
+**Multiple choice B**
+
+Select all planets.
+
+- [[X]] Earth
+- [[X]] Mars
+- [[ ]] Moon
+
+@ADetails(1;Flex-Multiplechoice-B)
+
+</div>
+
+<div class="flex-child">
+
+**Single choice A**
+
+What is $3+4$?
+
+- [( )] 6
+- [(X)] 7
+
+@ADetails(1;Flex-Singlechoice-A)
+
+</div>
+
+<div class="flex-child">
+
+**Single choice B**
+
+Which animal is a bird?
+
+- [(X)] Eagle
+- [( )] Dolphin
+
+@ADetails(1;Flex-Singlechoice-B)
+
+</div>
+
+<div class="flex-child">
+
+**Matrix A**
+
+Assign each number to its parity.
+
+- [[even] (odd)]
+- [ (X) ( ) ] 4
+- [ ( ) (X) ] 5
+
+@ADetails(1;Flex-Matrix-A)
+
+</div>
+
+<div class="flex-child">
+
+**Matrix B**
+
+Assign each animal to its class.
+
+- [[mammal] (bird)]
+- [ (X) ( ) ] Dog
+- [ ( ) (X) ] Owl
+
+@ADetails(1;Flex-Matrix-B)
+
+</div>
+
+<div class="flex-child">
+
+**Drag and drop A**
+
+Sun: [->[(yellow)]], sky: [->[(blue)]].
+
+@ADetails(1;Flex-Draganddrop-A)
+
+</div>
+
+<div class="flex-child">
+
+**Drag and drop B**
+
+A [->[(fish)]] swims; a [->[(bird)]] flies.
+
+@ADetails(1;Flex-Draganddrop-B)
+
+</div>
+
+<div class="flex-child">
+
+**Generic A**
+
+Check the statement: $2+2=4$.
+
+[[!]]
+<script>true</script>
+*************
+Correct: $2+2=4$.
+*************
+
+@ADetails(1;Flex-Generic-A)
+
+</div>
+
+<div class="flex-child">
+
+**Generic B**
+
+Check the statement: Earth orbits the Sun.
+
+[[!]]
+<script>true</script>
+*************
+Correct: Earth orbits the Sun.
+*************
+
+@ADetails(1;Flex-Generic-B)
+
+</div>
+
+<div class="flex-child">
+
+**Canvas OCR A**
+
+$2+2=$ [[ 4 ]] @canvas
+
+@ADetails(1;Flex-CanvasOCR-A)
+
+</div>
+
+<div class="flex-child">
+
+**Canvas OCR B**
+
+$3+2=$ [[ 5 ]] @canvas
+
+@ADetails(1;Flex-CanvasOCR-B)
+
+</div>
+
+<div class="flex-child">
+
+**Coordinates A**
+
+@CoordinateSystem(`xmin=-5;xmax=5;ymin=-5;ymax=5;width=420;id=FlexCoordA`)
+
+Drag point $A$ to $(1|2)$.
+
+@CreatePoint(`FlexCoordA;A;1;2`,`<!--  -->`)
+
+@ADetails(1;Flex-Coordinates-A)
+
+</div>
+
+<div class="flex-child">
+
+**Coordinates B**
+
+@CoordinateSystem(`xmin=-5;xmax=5;ymin=-5;ymax=5;width=420;id=FlexCoordB`)
+
+Drag point $B$ to $(-2|1)$.
+
+@CreatePoint(`FlexCoordB;B;-2;1`,`<!--  -->`)
+
+@ADetails(1;Flex-Coordinates-B)
+
+</div>
+
+<div class="flex-child">
+
+**Circle fraction A**
+
+Mark $\dfrac{1}{3}$ on the circle.
+
+@circleQuiz(1/3)
+
+@ADetails(1;Flex-Circlefraction-A)
+
+</div>
+
+<div class="flex-child">
+
+**Circle fraction B**
+
+Mark $\dfrac{3}{4}$ on the circle.
+
+@circleQuiz(3/4)
+
+@ADetails(1;Flex-Circlefraction-B)
+
+</div>
+
+<div class="flex-child">
+
+**Orthography A**
+
+Correct the spelling mistake.
+
+@orthography(`<!--  -->`,`The apel is green`,`The apple is green.`)
+
+@ADetails(1;Flex-Orthography-A)
+
+</div>
+
+<div class="flex-child">
+
+**Orthography B**
+
+Correct the spelling mistake.
+
+@orthography(`<!--  -->`,`The hous is large`,`The house is large.`)
+
+@ADetails(1;Flex-Orthography-B)
+
+</div>
+
+<div class="flex-child">
+
+**Text marker A**
+
+Mark RED in red.
+
+<div class="markerquiz">
+@markred(RED)
+@TextmarkerQuiz
+</div>
+
+@ADetails(1;Flex-Textmarker-A)
+
+</div>
+
+<div class="flex-child">
+
+**Text marker B**
+
+Mark BLUE in blue.
+
+<div class="markerquiz">
+@markblue(BLUE)
+@TextmarkerQuiz
+</div>
+
+@ADetails(1;Flex-Textmarker-B)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS area A**
+
+Construct the triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsAreaA`)
+
+@DGS(`FlexDgsAreaA;tools=[200;510;920]`)
+
+@AreaQuiz(`FlexDgsAreaA;3;6;0.05`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Area-A)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS area B**
+
+Construct the triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsAreaB`)
+
+@DGS(`FlexDgsAreaB;tools=[200;510;920]`)
+
+@FlaecheQuiz(`FlexDgsAreaB;3;6;0.05`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Area-B)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS perimeter A**
+
+Construct the triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsPerimeterA`)
+
+@DGS(`FlexDgsPerimeterA;tools=[200;510;920]`)
+
+@PerimeterQuiz(`FlexDgsPerimeterA;3;12;0.05`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Perimeter-A)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS perimeter B**
+
+Construct the triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsPerimeterB`)
+
+@DGS(`FlexDgsPerimeterB;tools=[200;510;920]`)
+
+@UmfangQuiz(`FlexDgsPerimeterB;3;12;0.05`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Perimeter-B)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS construction A**
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsConstructionA`)
+
+@DGS(`FlexDgsConstructionA;tools=[200;510;920]`)
+
+@ConstructionQuiz(`FlexDgsConstructionA;3;fixed;Side4,Angle90,Side3;lengthTolerance=0.05;angleTolerance=1`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Construction-A)
+
+</div>
+
+<div class='flex-child'>
+
+**DGS construction B**
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsConstructionB`)
+
+@DGS(`FlexDgsConstructionB;tools=[200;510;920]`)
+
+@KonstruktionQuiz(`FlexDgsConstructionB;3;fest;S4,W90,S3;streckentoleranz=0.05;winkeltoleranz=1`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Construction-B)
+
+</div>
+
+<div class='flex-child'>
+
+**Combined DGS A**
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsCombinedA`)
+
+@DGS(`FlexDgsCombinedA;tools=[200;510;920]`)
+
+@CoordinateQuiz(`FlexDgsCombinedA;3;Construction(fixed;Side4,Angle90,Side3;lengthTolerance=0.05;angleTolerance=1);Area(6;0.05);Perimeter(12;0.05)`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Combined-A)
+
+</div>
+
+<div class='flex-child'>
+
+**Combined DGS B**
+
+Construct the counterclockwise triangle $(0|0)$, $(4|0)$, $(4|3)$.
+
+@CoordinateSystem(`xmin=-1;xmax=6;ymin=-1;ymax=5;width=420;id=FlexDgsCombinedB`)
+
+@DGS(`FlexDgsCombinedB;tools=[200;510;920]`)
+
+@GeometrieQuiz(`FlexDgsCombinedB;3;Konstruktion(fest;S4,W90,S3;streckentoleranz=0.05;winkeltoleranz=1);Flaeche(6;0.05);Umfang(12;0.05)`,`<!-- -->`)
+
+@ADetails(1;Flex-DGS-Combined-B)
+
+</div>
+
+</section>
+
+## Test slide
+
+The slides below let you test the plugin locally using `./dist/index.js`.
+
+@Exam(.5)
+
 
 ## Submit
 
 @Abgabe
 
-@Auswertung(F12;Tab;Time)
+@Auswertung(F12;Tab;Time;Send)

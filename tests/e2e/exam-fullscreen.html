@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Freeze Exam Fullscreen Harness</title>
+</head>
+<body>
+  <main class="lia-slide__content">
+    <h1>Local Exam Harness</h1>
+  </main>
+  <div class="lia-submit-box">
+    <input id="lia-name" type="text">
+    <button id="lia-create-link" type="button">Create Link</button>
+    <button id="lia-copy-link" type="button">Copy Link</button>
+    <textarea id="lia-link"></textarea>
+    <div id="lia-status"></div>
+    <div id="lia-frozen-note"></div>
+  </div>
+  <script>
+    if (!location.hash.includes("submission=")) {
+      const courseUrl = location.origin + "/tests/e2e/exam-fullscreen.md";
+      history.replaceState(null, "", "?" + encodeURIComponent(courseUrl) + "#1");
+    }
+  </script>
+  <script src="/dist/index.js"></script>
+</body>
+</html>

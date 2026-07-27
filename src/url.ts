@@ -100,7 +100,11 @@ export async function buildLink(payload: unknown & { sh?: string }): Promise<str
   if (!baseCourseUrl) return window.location.href;
 
   const { token } = await encodeToken(payload);
-  storeToken(token);
+
+  // Persist tokens only when a shared link is actually opened. Storing the
+  // freshly generated token in the live student tab would make a later reload
+  // of the original course enter shared-link mode even though its URL contains
+  // no submission token.
 
   const viewerBase = window.location.href.split("?")[0].split("#")[0];
   const slideHash =

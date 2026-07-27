@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Freeze PDF Report Harness</title>
+</head>
+<body>
+  <main class="lia-slide__content">
+    <h1>Local PDF Report Harness</h1>
+  </main>
+  <div class="lia-submit-box">
+    <input id="lia-name" type="text">
+    <div class="lia-submit-actions">
+      <button id="lia-create-link" type="button">Create Link</button>
+      <button id="lia-copy-link" type="button" disabled>Copy Link</button>
+      <button id="lia-print-pdf" type="button" hidden disabled>Save evaluation as PDF</button>
+    </div>
+    <textarea id="lia-link"></textarea>
+    <div id="lia-status"></div>
+    <div id="lia-frozen-note"></div>
+  </div>
+  <script>
+    const hasSubmission = (() => {
+      try {
+        return decodeURIComponent(location.search).includes("#submission=")
+          || location.hash.includes("submission=");
+      } catch {
+        return location.hash.includes("submission=");
+      }
+    })();
+    if (!hasSubmission) {
+      const courseUrl = location.origin + "/tests/e2e/print-report.md";
+      history.replaceState(null, "", "?" + encodeURIComponent(courseUrl) + "#3");
+    }
+
+    window.__freezePrintProbe = { calls: 0, atPrint: null };
+    window.print = function () {
+      const evaluation = document.getElementById("lia-eval-placeholder");
+      const header = document.getElementById("lia-print-header");
+      const freezeBar = document.getElementById("lia-freeze-bar");
+      const liveButton = document.getElementById("lia-print-pdf");
+      const evaluationStyle = evaluation ? getComputedStyle(evaluation) : null;
+      window.__freezePrintProbe.calls += 1;
+      window.__freezePrintProbe.atPrint = {
+        printClass: document.body.classList.contains("lia-print-report"),
+        headerText: header ? header.innerText : "",
+        headerDisplay: header ? getComputedStyle(header).display : "",
+        evaluationPosition: evaluationStyle ? evaluationStyle.position : "",
+        evaluationMaxHeight: evaluationStyle ? evaluationStyle.maxHeight : "",
+        evaluationOverflow: evaluationStyle ? evaluationStyle.overflowY : "",
+        freezeBarDisplay: freezeBar ? getComputedStyle(freezeBar).display : "missing",
+        liveButtonDisplay: liveButton ? getComputedStyle(liveButton).display : "missing",
+      };
+      setTimeout(() => window.dispatchEvent(new Event("afterprint")), 0);
+    };
+  </script>
+  <script src="/dist/index.js"></script>
+</body>
+</html>

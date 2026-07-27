@@ -3,9 +3,14 @@
   "version": "0.0.1",
   "description": "LiaScript submission link with state snapshot and freeze functionality",
   "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/unit/annotation-state.test.cjs tests/unit/canvas-state.test.cjs tests/unit/codec.test.cjs tests/unit/coordinate-state.test.cjs tests/unit/evaluation.test.cjs tests/unit/exam-routing.test.cjs tests/unit/marker-state.test.cjs tests/unit/mathe-state.test.cjs tests/unit/native-dom.test.cjs tests/unit/orthography-state.test.cjs tests/unit/runtime-windows.test.cjs tests/unit/security.test.cjs tests/unit/send-mode.test.cjs tests/unit/submission-document.test.cjs",
+    "check": "npm run typecheck && npm test",
+    "prebuild": "npm run check",
     "build": "parcel build src/index.ts --dist-dir dist --no-scope-hoist"
   },
   "devDependencies": {
+    "@liascript/devserver": "^1.2.7--1.0.9",
     "parcel": "^2.16.4",
     "typescript": "^5.4.0"
   }
