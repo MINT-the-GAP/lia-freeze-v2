@@ -6,6 +6,11 @@ import {
 } from "./marker-state";
 import { sameOriginRuntimeWindows } from "./runtime-windows";
 
+import {
+  observeAssignmentDetailSidecars,
+  refreshAssignmentDetailSidecars,
+} from './adetails-dom';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type FreezeBarState = {
@@ -25,14 +30,6 @@ export type PrintReportHeaderData = {
   courseVersion: string;
 };
 
-type AssignmentDetailsSpec = {
-  raw: string;
-  badge: string;
-  pointsValue: number | null;
-  pointsParts: number[];
-  tags: string[];
-};
-
 export type AssignmentDetailAwardContext = {
   getHash(): string;
   getDefaultAward(hash: string, taskIndex: number, maximum: number): number;
@@ -41,6 +38,7 @@ export type AssignmentDetailAwardContext = {
 
 let assignmentDetailAwardContext: AssignmentDetailAwardContext | null = null;
 let manualAwardValues: Record<string, string> = Object.create(null);
+const assignmentDetailObserverDocuments = new WeakSet<Document>();
 
 export function configureAssignmentDetailAwards(
   context: AssignmentDetailAwardContext | null
@@ -345,18 +343,34 @@ body.lia-snapshot-mode #lia-freeze-info { display: block !important; }
 }
 
 /* ── @ADetails scoring badges ── */
-.lia-adetails-points {
+.lia-assignment-details[data-adetails] {
+  display: inline-flex !important;
+  visibility: visible !important;
+  align-items: flex-start;
+  max-width: 100%;
+  margin: .22rem 0 .42rem .7rem;
+  vertical-align: middle;
+  pointer-events: none !important;
+}
+.lia-assignment-details[data-adetails]::part(sidecar) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .3rem;
+  max-width: 100%;
+}
+.lia-assignment-details[data-adetails]::part(points),
+.lia-adetails-print-sidecar {
   display: inline-flex;
   align-items: center;
   gap: .28rem;
-  margin-left: .7rem;
   font-weight: 700;
   white-space: nowrap;
   opacity: .92;
   color: inherit;
   pointer-events: none !important;
 }
-.lia-adetails-award-input {
+.lia-assignment-details[data-adetails]::part(award-input) {
   width: 3.2em;
   min-width: 3.2em;
   box-sizing: border-box;
@@ -371,18 +385,36 @@ body.lia-snapshot-mode #lia-freeze-info { display: block !important; }
   font-weight: 700;
   text-align: center;
 }
-.lia-adetails-award-input::placeholder {
+.lia-assignment-details[data-adetails]::part(award-input)::placeholder {
   color: rgba(255,255,255,.7);
   -webkit-text-fill-color: rgba(255,255,255,.7);
 }
-body.lia-shared-freeze-link .lia-quiz__control .lia-adetails-points,
-body.lia-shared-freeze-link .lia-quiz__control .lia-adetails-points * {
+body.lia-shared-freeze-link .lia-assignment-details[data-adetails],
+body.lia-shared-freeze-link .lia-assignment-details[data-adetails]::part(points),
+body.lia-shared-freeze-link .lia-assignment-details[data-adetails]::part(award-input) {
   pointer-events: auto !important;
 }
-body.lia-shared-freeze-link .lia-frozen-scope .lia-adetails-award-input {
+body.lia-shared-freeze-link .lia-frozen-scope
+  .lia-assignment-details[data-adetails]::part(award-input) {
   pointer-events: auto !important;
   cursor: text !important;
   user-select: text !important;
+}
+.lia-assignment-details[data-adetails]::part(send-status),
+.lia-assignment-details[data-adetails]::part(feedback) {
+  display: block;
+  max-width: min(42rem, calc(100vw - 3rem));
+  white-space: normal;
+}
+.lia-assignment-details[data-adetails]::part(send-status) {
+  font-weight: 700;
+  color: var(--lia-course-fg, currentColor);
+}
+.lia-assignment-details[data-adetails]::part(feedback) {
+  margin-top: .2rem;
+}
+.lia-adetails-print-sidecar {
+  margin-left: .4rem;
 }
 
 /* ── Frozen submission print/PDF report ── */
@@ -838,311 +870,26 @@ function isFreezePreservedElement(element: Element | null): boolean {
   try { return !!element.closest(FROZEN_PRESERVED_SELECTOR); } catch { return false; }
 }
 
-function normalizeSpace(s: string): string {
-  return String(s || "").trim().replace(/\s+/g, " ");
-}
-
-function compareElementsInDocumentOrder(a: Element, b: Element): number {
-  if (a === b) return 0;
-  const pos = a.compareDocumentPosition(b);
-  if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-  if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-  return 0;
-}
-
-function formatAssignmentValue(value: number): string {
-  const rounded = Math.round(value * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/\.0+$/, "");
-}
-
-function parseAssignmentPointSpec(raw: string): { total: number | null; parts: number[] } {
-  const chunks = normalizeSpace(raw).split(/\s*\|\s*/).filter(Boolean);
-  if (!chunks.length) return { total: null, parts: [] };
-  const parts = chunks.map(chunk => Number(chunk.replace(",", ".")));
-  if (parts.some(value => !Number.isFinite(value) || value < 0)) {
-    return { total: null, parts: [] };
-  }
-  return { total: parts.reduce((sum, value) => sum + value, 0), parts };
-}
-
-function parseAssignmentDetails(raw: string): AssignmentDetailsSpec {
-  const txt = normalizeSpace(raw);
-  let pointsValue: number | null = null;
-  let pointsParts: number[] = [];
-  const tags: string[] = [];
-
-  const parts = txt.split(/\s*;\s*/).filter(Boolean);
-
-  parts.forEach((part, index) => {
-    const p = normalizeSpace(part);
-
-    const tagKeyM = p.match(/^tags?\s*[:=]\s*(.+)$/i);
-    if (tagKeyM) {
-      tagKeyM[1].split(",").map(t => normalizeSpace(t)).filter(Boolean).forEach(t => {
-        if (!tags.includes(t)) tags.push(t);
-      });
-      return;
-    }
-
-    const ptsKeyM = p.match(/^(?:points?|be|punkte?)\s*[:=]\s*([\d.,]+(?:\s*\|\s*[\d.,]+)*)$/i);
-    if (ptsKeyM) {
-      const parsed = parseAssignmentPointSpec(ptsKeyM[1]);
-      if (parsed.total !== null && pointsValue === null) {
-        pointsValue = parsed.total;
-        pointsParts = parsed.parts;
-      }
-      return;
-    }
-
-    const numUnitM = p.match(/^([\d.,]+(?:\s*\|\s*[\d.,]+)*)\s*=\s*[A-Za-z%]+$/);
-    if (numUnitM) {
-      const parsed = parseAssignmentPointSpec(numUnitM[1]);
-      if (parsed.total !== null && pointsValue === null) {
-        pointsValue = parsed.total;
-        pointsParts = parsed.parts;
-      }
-      return;
-    }
-
-    const bare = parseAssignmentPointSpec(p);
-    if (bare.total !== null && pointsValue === null) {
-      pointsValue = bare.total;
-      pointsParts = bare.parts;
-      return;
-    }
-
-    if (index >= 1 || parts.length === 1) {
-      p.split(",").map(t => normalizeSpace(t)).filter(Boolean).forEach(t => {
-        if (!tags.includes(t)) tags.push(t);
-      });
-    }
-  });
-
-  return {
-    raw: txt,
-    badge: pointsValue === null ? "" : formatAssignmentValue(pointsValue) + " BE",
-    pointsValue,
-    pointsParts,
-    tags,
-  };
-}
-
-function getLastQuizCheckBeforeMarker(marker: Element): HTMLButtonElement | null {
-  const host = getContentHost() ?? document.body;
-  const localScope = marker.closest(".flex-child") ?? host;
-
-  const pickLatest = (scope: ParentNode): HTMLButtonElement | null => {
-    const checks = Array.from(scope.querySelectorAll<HTMLButtonElement>(".lia-quiz__check"));
-    let best: HTMLButtonElement | null = null;
-    checks.forEach(check => {
-      if (check.closest("#lia-freeze-bar") || check.closest(".lia-submit-box")) return;
-      if (!(check.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
-      if (!best || (best.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING)) {
-        best = check;
-      }
-    });
-    return best;
-  };
-
-  return pickLatest(localScope) ?? (localScope === host ? null : pickLatest(host));
-}
-
-function ensureAssignmentDetailOwnerId(marker: Element): string {
-  const existing = marker.getAttribute("data-adetails-owner-id");
-  if (existing) return existing;
-  const ownerId = "lia-adetails-" + Math.random().toString(36).slice(2, 10);
-  marker.setAttribute("data-adetails-owner-id", ownerId);
-  return ownerId;
-}
-
-function ensureAssignmentDetailBadge(checkBtn: HTMLButtonElement, ownerId: string): HTMLSpanElement {
-  const control =
-    checkBtn.closest(".lia-quiz__control") ??
-    checkBtn.parentElement ??
-    checkBtn;
-
-  let badge = control.querySelector<HTMLSpanElement>('.lia-adetails-points[data-adetails-owner="' + ownerId + '"]');
-  if (!badge) {
-    badge = document.createElement("span");
-    badge.className = "lia-adetails-points";
-    badge.setAttribute("data-adetails-owner", ownerId);
-    control.appendChild(badge);
-  }
-  return badge;
-}
-
-function placeAssignmentDetailBadge(
-  checkBtn: HTMLButtonElement,
-  badge: HTMLSpanElement
-): void {
-  const control =
-    checkBtn.closest('.lia-quiz__control') ??
-    checkBtn.parentElement ??
-    checkBtn;
-
-  const last = <T extends Element>(items: NodeListOf<T>): T | null =>
-    items.length ? items[items.length - 1] : null;
-  const hints = last(control.querySelectorAll<HTMLElement>('.lia-quiz__hint'));
-  const resolve = last(control.querySelectorAll<HTMLElement>('.lia-quiz__resolve'));
-  const reset = Array.from(control.querySelectorAll<HTMLElement>('button,[role=button]'))
-    .filter(element => {
-      const label = normalizeSpace(
-        element.getAttribute('aria-label')
-        || element.getAttribute('title')
-        || element.textContent
-        || ''
-      );
-      return /^(?:reset|zurücksetzen)$/i.test(label);
-    })
-    .pop() ?? null;
-  const anchor = hints ?? resolve ?? reset;
-
-  if (anchor?.parentElement) anchor.insertAdjacentElement('afterend', badge);
-  else control.appendChild(badge);
-}
-
-function getAssignmentDetailTaskIndex(
-  marker: Element,
-  checkBtn: HTMLButtonElement,
-  host: Element
-): number {
-  const quizRoots = Array.from(host.querySelectorAll<HTMLElement>(".lia-quiz"))
-    .filter(root => !root.closest("#lia-freeze-bar,.lia-submit-box,.lia-annot-toolbar"));
-  const quizRoot = checkBtn.closest<HTMLElement>(".lia-quiz");
-  const rootIndex = quizRoot ? quizRoots.indexOf(quizRoot) : -1;
-  if (rootIndex >= 0) return rootIndex + 1;
-
-  const orderedMarkers = Array.from(host.querySelectorAll<HTMLElement>("[data-adetails]"))
-    .filter(item => !item.closest("#lia-freeze-bar,.lia-submit-box"))
-    .sort(compareElementsInDocumentOrder);
-  const markerIndex = orderedMarkers.indexOf(marker as HTMLElement);
-  return markerIndex >= 0 ? markerIndex + 1 : 0;
-}
-
-function assignmentDetailAwardKey(hash: string, taskIndex: number): string {
-  const cleanHash = /^#\d+$/.test(String(hash || "").trim())
-    ? String(hash).trim()
-    : "";
-  return cleanHash && taskIndex > 0
-    ? cleanHash + "::task::" + taskIndex
-    : "";
-}
-
-function renderAssignmentDetailBadge(
-  badge: HTMLSpanElement,
-  marker: HTMLElement,
-  spec: AssignmentDetailsSpec,
-  taskIndex: number
-): void {
-  const sharedLink = !!document.body?.classList.contains("lia-shared-freeze-link");
-  const maximum = spec.pointsValue;
-  if (!sharedLink || maximum === null || maximum <= 0 || taskIndex <= 0) {
-    badge.textContent = spec.badge;
-    badge.style.display = spec.badge ? "inline-flex" : "none";
-    return;
-  }
-
-  const hash = assignmentDetailAwardContext?.getHash() ?? window.location.hash;
-  const key = assignmentDetailAwardKey(hash, taskIndex);
-  if (!key) {
-    badge.textContent = spec.badge;
-    badge.style.display = spec.badge ? "inline-flex" : "none";
-    return;
-  }
-
-  let input = badge.querySelector<HTMLInputElement>(".lia-adetails-award-input");
-  if (!input || input.getAttribute("data-adetails-award-key") !== key) {
-    badge.replaceChildren();
-    input = document.createElement("input");
-    input.type = "text";
-    input.inputMode = "decimal";
-    input.autocomplete = "off";
-    input.className = "lia-adetails-award-input";
-    input.setAttribute("data-adetails-award-key", key);
-
-    const separator = document.createElement("span");
-    separator.className = "lia-adetails-award-sep";
-    separator.textContent = "/";
-    const total = document.createElement("span");
-    total.className = "lia-adetails-award-total";
-    total.textContent = spec.badge;
-    badge.append(input, separator, total);
-
-    const handleChange = () => {
-      manualAwardValues[key] = input?.value ?? "";
-      assignmentDetailAwardContext?.onChange();
-    };
-    input.addEventListener("input", handleChange);
-    input.addEventListener("change", handleChange);
-  }
-
-  const total = badge.querySelector<HTMLElement>(".lia-adetails-award-total");
-  if (total) total.textContent = spec.badge;
-  const hasManualValue = Object.prototype.hasOwnProperty.call(manualAwardValues, key);
-  if (document.activeElement !== input) {
-    const automatic = assignmentDetailAwardContext?.getDefaultAward(
-      hash,
-      taskIndex,
-      maximum
-    ) ?? 0;
-    input.value = hasManualValue
-      ? manualAwardValues[key]
-      : formatAssignmentValue(Math.max(0, Math.min(maximum, automatic)));
-  }
-  marker.setAttribute("data-adetails-award-key", key);
-  badge.style.display = "inline-flex";
-}
-
 export function refreshAssignmentDetails(): void {
   const host = getContentHost() ?? document.body;
-  const markers = Array.from(host.querySelectorAll<HTMLElement>("[data-adetails]"));
+  if (!assignmentDetailObserverDocuments.has(document)) {
+    assignmentDetailObserverDocuments.add(document);
+    observeAssignmentDetailSidecars(document, refreshAssignmentDetails);
+  }
 
-  markers
-    .filter(marker => !marker.closest("#lia-freeze-bar") && !marker.closest(".lia-submit-box"))
-    .sort(compareElementsInDocumentOrder)
-    .forEach(marker => {
-      const spec = parseAssignmentDetails(marker.getAttribute("data-adetails") || "");
-      marker.setAttribute("data-adetails-raw", spec.raw);
-      if (spec.pointsValue !== null) marker.setAttribute("data-adetails-points", String(spec.pointsValue));
-      else marker.removeAttribute("data-adetails-points");
-      if (spec.tags.length) marker.setAttribute("data-adetail-tags", JSON.stringify(spec.tags));
-      else marker.removeAttribute("data-adetail-tags");
-
-      const checkBtn = getLastQuizCheckBeforeMarker(marker);
-      if (!checkBtn || !spec.badge) return;
-
-      const taskIndex = getAssignmentDetailTaskIndex(marker, checkBtn, host);
-      if (taskIndex > 0) marker.setAttribute("data-adetails-task-index", String(taskIndex));
-      else marker.removeAttribute("data-adetails-task-index");
-
-      const ownerId = ensureAssignmentDetailOwnerId(marker);
-      const badge = ensureAssignmentDetailBadge(checkBtn, ownerId);
-      placeAssignmentDetailBadge(checkBtn, badge);
-
-      const control = checkBtn.closest(".lia-quiz__control") ?? checkBtn.parentElement;
-      const quizRoot = checkBtn.closest(".lia-quiz");
-      [quizRoot, control, checkBtn].forEach(element => {
-        if (!element) return;
-        element.setAttribute("data-adetails-raw", spec.raw);
-        element.setAttribute("data-adetails-badge", spec.badge);
-        if (spec.pointsValue !== null) {
-          element.setAttribute("data-adetails-points", String(spec.pointsValue));
-        } else {
-          element.removeAttribute("data-adetails-points");
-        }
-        if (spec.pointsParts.length) {
-          element.setAttribute("data-adetails-point-parts", JSON.stringify(spec.pointsParts));
-        } else {
-          element.removeAttribute("data-adetails-point-parts");
-        }
-        if (spec.tags.length) {
-          element.setAttribute("data-adetail-tags", JSON.stringify(spec.tags));
-        } else {
-          element.removeAttribute("data-adetail-tags");
-        }
-      });
-      renderAssignmentDetailBadge(badge, marker, spec, taskIndex);
-    });
+  const context = assignmentDetailAwardContext;
+  refreshAssignmentDetailSidecars(host, {
+    award: context ? {
+      getHash: () => context.getHash(),
+      getDefaultAward: (hash, taskIndex, maximum) =>
+        context.getDefaultAward(hash, taskIndex, maximum),
+      getValue: key => Object.prototype.hasOwnProperty.call(manualAwardValues, key)
+        ? manualAwardValues[key]
+        : undefined,
+      setValue: (key, value) => { manualAwardValues[key] = value; },
+      onChange: () => context.onChange(),
+    } : null,
+  });
 }
 
 export function setPageFrozen(frozen: boolean, isSharedLink = false): void {

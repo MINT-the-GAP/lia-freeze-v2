@@ -186,8 +186,34 @@ function installPageHelpers() {
       if (!cell || !wrap || !root || !input || !solution || !uid) {
         throw new Error('Orthography #' + index + ' is incomplete');
       }
+      const adetailsHost = cell.querySelector(
+        '.lia-assignment-details[data-adetails]'
+      );
+      const adetailsShadow = adetailsHost?.shadowRoot || null;
+      const sidecarRoots = adetailsShadow
+        ? Array.from(adetailsShadow.querySelectorAll(
+          '[data-lia-freeze-adetails-sidecar]'
+        ))
+        : [];
+      const sidecarRoot = sidecarRoots[0] || null;
+      const statuses = sidecarRoot
+        ? Array.from(sidecarRoot.querySelectorAll('.lia-send-status'))
+        : [];
+      const status = statuses[0] || null;
+      const control = root.querySelector('.lia-quiz__control');
+      const forbiddenSidecarSelector = [
+        '.lia-send-status',
+        '.lia-adetails-points',
+        '.lia-adetails-sidecar',
+        '.lia-adetails-feedback',
+        '[data-lia-send-logged]',
+        '[data-lia-freeze-adetails-sidecar]',
+      ].join(',');
       const runtimeState = api()?.getAllStates?.()?.[uid] || {};
-      const feedback = root.querySelector('.lia-quiz__feedback');
+      const sidecarFeedback = Array.from(
+        sidecarRoot?.querySelectorAll('.lia-adetails-feedback') || []
+      ).find(item => !!item.textContent?.trim()) || null;
+      const feedback = sidecarFeedback || root.querySelector('.lia-quiz__feedback');
       const resolve = root.querySelector('.lia-quiz__resolve');
       const check = root.querySelector('.lia-quiz__check');
       const className = root.className || '';
@@ -209,8 +235,7 @@ function installPageHelpers() {
         phase: phase(),
         frozen: document.body.classList.contains('lia-course-frozen'),
         shared: document.body.classList.contains('lia-shared-freeze-link'),
-        adetails: cell.querySelector('.lia-assignment-details')
-          ?.getAttribute('data-adetails') || '',
+        adetails: adetailsHost?.getAttribute('data-adetails') || '',
         className,
         open: /\bopen\b/i.test(className),
         outcomeClass: /\b(?:solved|resolved|failed|success)\b/i.test(className),
@@ -218,8 +243,21 @@ function installPageHelpers() {
         correct: /\b(?:solved|success|correct|right answer)\b/i.test(
           className + ' ' + outcome + ' ' + feedbackClass + ' ' + feedbackText
         ),
-        sendLogged: root.getAttribute('data-lia-send-logged') === '1',
-        status: root.querySelector('.lia-send-status')?.textContent?.trim() || '',
+        sendLogged: sidecarRoot?.getAttribute('data-lia-send-logged') === '1',
+        status: status?.textContent?.trim() || '',
+        ownership: {
+          hostExists: !!adetailsHost,
+          hostOutsideQuiz: !!adetailsHost
+            && !adetailsHost.closest('.lia-quiz,.lia-quiz__control'),
+          hostLightDomEmpty: !!adetailsHost && adetailsHost.childNodes.length === 0,
+          sidecarRootCount: sidecarRoots.length,
+          statusCount: statuses.length,
+          quizHasSendLogged: root.hasAttribute('data-lia-send-logged'),
+          quizLightDomSidecars: root.querySelectorAll(forbiddenSidecarSelector).length,
+          controlLightDomSidecars: control
+            ? control.querySelectorAll(forbiddenSidecarSelector).length
+            : 0,
+        },
         input: {
           value: input.value,
           readOnly: !!input.readOnly,
@@ -492,7 +530,24 @@ function summarizeTimeline(samples) {
   });
 }
 
+function assertSidecarOwnership(item, label) {
+  const ownership = item.ownership || {};
+  assert(item.adetails && ownership.hostExists && ownership.hostOutsideQuiz,
+    label + ' has no external ADetails host: ' + JSON.stringify(item));
+  assert(ownership.hostLightDomEmpty
+      && ownership.sidecarRootCount === 1
+      && ownership.statusCount === 1,
+    label + ' does not have exactly one Shadow-DOM status sidecar: '
+      + JSON.stringify(item));
+  assert(!ownership.quizHasSendLogged
+      && ownership.quizLightDomSidecars === 0
+      && ownership.controlLightDomSidecars === 0,
+    label + ' leaked Send/ADetails state into Elm-owned quiz light DOM: '
+      + JSON.stringify(item));
+}
+
 function assertCollect(item, label, expectedValue) {
+  assertSidecarOwnership(item, label);
   assert(item.phase === 'collect' && item.open && item.sendLogged,
     label + ' is not neutrally logged/open: ' + JSON.stringify(item));
   assert(item.status.startsWith('Antwort gespeichert'),
@@ -510,6 +565,7 @@ function assertCollect(item, label, expectedValue) {
 }
 
 function assertReview(item, label, shared, expectedDetails) {
+  assertSidecarOwnership(item, label);
   assert(item.phase === 'review' && item.frozen && item.shared === shared,
     label + ' is not the expected frozen review: ' + JSON.stringify(item));
   assert(item.correct && item.feedback.text && item.feedback.visible,

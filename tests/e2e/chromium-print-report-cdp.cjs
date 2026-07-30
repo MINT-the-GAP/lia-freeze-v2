@@ -76,13 +76,22 @@ socket.addEventListener('open', async () => {
 
     await command('Emulation.setEmulatedMedia', { media: 'print' });
     const live = await evaluate([
-      'new Promise(resolve => {',
+      'new Promise((resolve, reject) => {',
+      '  const deadline = Date.now() + 30000;',
       '  document.getElementById("lia-print-pdf").click();',
-      '  setTimeout(() => resolve({',
-      '    probe: window.__freezePrintProbe,',
-      '    printClassAfter: document.body.classList.contains("lia-print-report"),',
-      '    evaluationAfter: document.getElementById("lia-eval-placeholder")?.style.display || ""',
-      '  }), 80);',
+      '  const poll = () => {',
+      '    const probe = window.__freezePrintProbe;',
+      '    if (probe?.calls === 1) return resolve({',
+      '      probe,',
+      '      printClassAfter: document.body.classList.contains("lia-print-report"),',
+      '      evaluationAfter: document.getElementById("lia-eval-placeholder")?.style.display || ""',
+      '    });',
+      '    if (Date.now() >= deadline) {',
+      '      return reject(new Error("Timed out waiting for live print probe"));',
+      '    }',
+      '    setTimeout(poll, 50);',
+      '  };',
+      '  poll();',
       '})',
     ].join('\n'));
     const livePrint = live.probe.atPrint;
@@ -105,17 +114,26 @@ socket.addEventListener('open', async () => {
     await command('Emulation.setEmulatedMedia', { media: 'print' });
 
     const shared = await evaluate([
-      'new Promise(resolve => {',
+      'new Promise((resolve, reject) => {',
       '  const button = document.getElementById("lia-freeze-print");',
       '  if (!button) return resolve({ missing: true });',
+      '  const deadline = Date.now() + 30000;',
       '  button.click();',
-      '  setTimeout(() => resolve({',
-      '    missing: false,',
-      '    probe: window.__freezePrintProbe,',
-      '    shared: document.body.classList.contains("lia-shared-freeze-link"),',
-      '    printClassAfter: document.body.classList.contains("lia-print-report"),',
-      '    evaluationAfter: document.getElementById("lia-eval-placeholder")?.style.display || ""',
-      '  }), 80);',
+      '  const poll = () => {',
+      '    const probe = window.__freezePrintProbe;',
+      '    if (probe?.calls === 1) return resolve({',
+      '      missing: false,',
+      '      probe,',
+      '      shared: document.body.classList.contains("lia-shared-freeze-link"),',
+      '      printClassAfter: document.body.classList.contains("lia-print-report"),',
+      '      evaluationAfter: document.getElementById("lia-eval-placeholder")?.style.display || ""',
+      '    });',
+      '    if (Date.now() >= deadline) {',
+      '      return reject(new Error("Timed out waiting for shared print probe"));',
+      '    }',
+      '    setTimeout(poll, 50);',
+      '  };',
+      '  poll();',
       '})',
     ].join('\n'));
 

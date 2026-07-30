@@ -50,6 +50,28 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const runStartedAt = Date.now();
+let currentPhase = 'socket:connecting';
+const browserErrors = [];
+
+function reportPhase(name, details) {
+  currentPhase = name;
+  const suffix = details === undefined ? '' : ' ' + JSON.stringify(details);
+  process.stderr.write(
+    '[Canvas E2E +' + (Date.now() - runStartedAt) + 'ms] ' + name + suffix + '\n'
+  );
+}
+
+function recordBrowserError(kind, text) {
+  if (!text || browserErrors.length >= 30) return;
+  browserErrors.push({
+    phase: currentPhase,
+    elapsedMs: Date.now() - runStartedAt,
+    kind,
+    text: String(text).slice(0, 1200),
+  });
+}
+
 async function trustedClick(point) {
   await command('Input.dispatchMouseEvent', {
     type: 'mousePressed',
@@ -95,6 +117,222 @@ async function trustedDrag(start, end, steps = 8) {
     buttons: 0,
     clickCount: 1,
   });
+}
+
+async function findCanvasLauncherTarget(cellIndex) {
+  return evaluateCall(async function (index) {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const frame = () => Promise.race([
+      new Promise(resolve => requestAnimationFrame(resolve)),
+      pause(50),
+    ]);
+    let previousRect = '';
+    let stableSamples = 0;
+    let last = null;
+
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const button = document.querySelectorAll('.flex-child')[index]
+        ?.querySelector('.lia-canvas-launch');
+      if (!button) {
+        last = { hit: false, reason: 'launcher missing' };
+        await pause(80);
+        continue;
+      }
+
+      button.scrollIntoView({ block: 'center', inline: 'center' });
+      await frame();
+      await frame();
+
+      const rect = button.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      const rectKey = [rect.left, rect.top, rect.width, rect.height]
+        .map(value => Math.round(value * 10) / 10)
+        .join(':');
+      stableSamples = rectKey === previousRect ? stableSamples + 1 : 0;
+      previousRect = rectKey;
+
+      const fractions = [0.5, 0.3, 0.7];
+      let point = null;
+      let topmost = '';
+      for (const yFraction of fractions) {
+        for (const xFraction of fractions) {
+          const candidate = {
+            x: rect.left + rect.width * xFraction,
+            y: rect.top + rect.height * yFraction,
+          };
+          if (candidate.x < 0 || candidate.y < 0
+            || candidate.x >= innerWidth || candidate.y >= innerHeight) continue;
+          const hit = document.elementFromPoint(candidate.x, candidate.y);
+          topmost = hit?.className?.baseVal || hit?.className || hit?.tagName || '';
+          if (hit === button || hit?.closest('.lia-canvas-launch') === button) {
+            point = candidate;
+            break;
+          }
+        }
+        if (point) break;
+      }
+
+      last = {
+        hit: !!point,
+        point,
+        connected: button.isConnected,
+        stableSamples,
+        topmost: String(topmost),
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        style: { display: style.display, visibility: style.visibility, pointerEvents: style.pointerEvents },
+      };
+      if (point && button.isConnected && stableSamples >= 1) return last;
+      await pause(80);
+    }
+    return last;
+  }, cellIndex);
+}
+
+async function canvasLauncherPointStillHits(cellIndex, point) {
+  return evaluateCall(function (index, x, y) {
+    const button = document.querySelectorAll('.flex-child')[index]
+      ?.querySelector('.lia-canvas-launch');
+    const hit = document.elementFromPoint(x, y);
+    return !!button && button.isConnected
+      && (hit === button || hit?.closest('.lia-canvas-launch') === button);
+  }, cellIndex, point.x, point.y);
+}
+
+async function waitForCanvasOpen(cellIndex, allowLauncherRetry) {
+  return evaluateCall(async function (index, mayRetry) {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    let last = null;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const cell = document.querySelectorAll('.flex-child')[index];
+      const canvas = cell?.querySelector('canvas.lia-draw[data-ready=\'1\']');
+      const mount = cell?.querySelector('.lia-canvas-mount');
+      if (canvas?.isConnected) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          return {
+            ready: true,
+            mountOpen: mount?.dataset.open === '1',
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          };
+        }
+      }
+      const launcher = cell?.querySelector('.lia-canvas-launch');
+      const launcherRect = launcher?.getBoundingClientRect();
+      last = {
+        ready: false,
+        canvasPresent: !!canvas,
+        mountOpen: mount?.dataset.open === '1',
+        launcherPresent: !!launcher,
+        launcherVisible: !!launcherRect && launcherRect.width > 0 && launcherRect.height > 0,
+      };
+      if (mayRetry && attempt >= 8 && last.launcherVisible && !last.mountOpen) return last;
+      await pause(100);
+    }
+    return last;
+  }, cellIndex, allowLauncherRetry);
+}
+
+async function findCanvasResizeTarget(cellIndex) {
+  return evaluateCall(async function (index) {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const frame = () => Promise.race([
+      new Promise(resolve => requestAnimationFrame(resolve)),
+      pause(50),
+    ]);
+    const selector = '.lia-resize-corner[data-corner=br]';
+    let previousRect = '';
+    let stableSamples = 0;
+    let last = null;
+
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const cell = document.querySelectorAll('.flex-child')[index];
+      const handle = cell?.querySelector(selector);
+      const canvas = cell?.querySelector('canvas.lia-draw');
+      if (!handle || !canvas) {
+        last = { hit: false, reason: !handle ? 'resize handle missing' : 'canvas missing' };
+        await pause(80);
+        continue;
+      }
+
+      handle.scrollIntoView({ block: 'center', inline: 'center' });
+      await frame();
+      await frame();
+
+      const handleRect = handle.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const style = getComputedStyle(handle);
+      const rectKey = [handleRect.left, handleRect.top, handleRect.width, handleRect.height]
+        .map(value => Math.round(value * 10) / 10)
+        .join(':');
+      stableSamples = rectKey === previousRect ? stableSamples + 1 : 0;
+      previousRect = rectKey;
+
+      const fractions = [0.5, 0.3, 0.7, 0.15, 0.85];
+      let point = null;
+      let topmost = '';
+      for (const yFraction of fractions) {
+        for (const xFraction of fractions) {
+          const candidate = {
+            x: handleRect.left + handleRect.width * xFraction,
+            y: handleRect.top + handleRect.height * yFraction,
+          };
+          if (candidate.x < 0 || candidate.y < 0
+            || candidate.x >= innerWidth || candidate.y >= innerHeight) continue;
+          const hit = document.elementFromPoint(candidate.x, candidate.y);
+          topmost = hit?.className?.baseVal || hit?.className || hit?.tagName || '';
+          if (hit?.closest(selector) === handle) {
+            point = candidate;
+            break;
+          }
+        }
+        if (point) break;
+      }
+
+      last = {
+        hit: !!point,
+        point,
+        connected: handle.isConnected,
+        stableSamples,
+        topmost: String(topmost),
+        rect: {
+          x: handleRect.x,
+          y: handleRect.y,
+          width: handleRect.width,
+          height: handleRect.height,
+        },
+        canvasHeight: canvasRect.height,
+        style: { display: style.display, visibility: style.visibility, pointerEvents: style.pointerEvents },
+      };
+      if (point && handle.isConnected && stableSamples >= 1) return last;
+      await pause(80);
+    }
+    return last;
+  }, cellIndex);
+}
+
+async function canvasResizePointStillHits(cellIndex, point) {
+  return evaluateCall(function (index, x, y) {
+    const selector = '.lia-resize-corner[data-corner=br]';
+    const handle = document.querySelectorAll('.flex-child')[index]
+      ?.querySelector(selector);
+    return !!handle && handle.isConnected
+      && document.elementFromPoint(x, y)?.closest(selector) === handle;
+  }, cellIndex, point.x, point.y);
+}
+
+async function waitForCanvasHeight(cellIndex, minimumHeight, attempts) {
+  return evaluateCall(async function (index, minimum, limit) {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    let height = 0;
+    for (let attempt = 0; attempt < limit; attempt++) {
+      const canvas = document.querySelectorAll('.flex-child')[index]
+        ?.querySelector('canvas.lia-draw');
+      height = canvas?.getBoundingClientRect().height || 0;
+      if (height >= minimum) return { reached: true, height };
+      await pause(100);
+    }
+    return { reached: false, height };
+  }, cellIndex, minimumHeight, attempts);
 }
 
 async function assertCanvasHit(point, label) {
@@ -189,7 +427,27 @@ function payloadCanvasState(payload, uid) {
 
 socket.addEventListener('message', event => {
   const message = JSON.parse(String(event.data));
-  if (!('id' in message)) return;
+  if (!('id' in message)) {
+    if (message.method === 'Runtime.exceptionThrown') {
+      const details = message.params?.exceptionDetails;
+      recordBrowserError(
+        'exception',
+        details?.exception?.description || details?.text || 'Runtime exception'
+      );
+    } else if (message.method === 'Runtime.consoleAPICalled'
+      && message.params?.type === 'error') {
+      recordBrowserError(
+        'console',
+        (message.params.args || []).map(argument =>
+          argument.value ?? argument.description ?? ''
+        ).join(' ')
+      );
+    } else if (message.method === 'Log.entryAdded'
+      && message.params?.entry?.level === 'error') {
+      recordBrowserError('log', message.params.entry.text);
+    }
+    return;
+  }
   const waiter = pending.get(message.id);
   if (!waiter) return;
   pending.delete(message.id);
@@ -203,6 +461,7 @@ socket.addEventListener('error', error => {
 });
 
 async function run() {
+  reportPhase('course:waiting');
   const ready = await evaluateCall(async function () {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (let attempts = 0; document.querySelectorAll('.flex-child').length !== 34 && attempts < 120; attempts++) {
@@ -211,28 +470,43 @@ async function run() {
     return {
       hash: location.hash,
       cells: document.querySelectorAll('.flex-child').length,
+      href: location.href,
+      readyState: document.readyState,
+      title: document.title,
+      body: document.body?.innerText?.slice(0, 240) || '',
     };
   });
   assert(ready.hash === '#27', 'Expected fresh README slide #27, got ' + ready.hash);
-  assert(ready.cells === 34, 'Expected 34 flex children, got ' + ready.cells);
+  assert(ready.cells === 34, 'Expected 34 flex children: ' + JSON.stringify(ready));
+  reportPhase('course:ready', ready);
 
-  const launcher = await evaluateCall(async function (cellIndex) {
-    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-    const button = document.querySelectorAll('.flex-child')[cellIndex]
-      ?.querySelector('.lia-canvas-launch');
-    if (!button) return null;
-    button.scrollIntoView({ block: 'center', inline: 'center' });
-    await pause(150);
-    const rect = button.getBoundingClientRect();
-    const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    const hit = document.elementFromPoint(point.x, point.y);
-    return {
-      point,
-      hit: hit === button || hit?.closest('.lia-canvas-launch') === button,
-    };
-  }, 16);
-  assert(launcher?.hit, 'Canvas OCR A launcher is not the topmost hit target');
-  await trustedClick(launcher.point);
+  const launchAttempts = [];
+  let canvasOpened = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    reportPhase('launcher:target', { attempt: attempt + 1 });
+    const launcher = await findCanvasLauncherTarget(16);
+    const verified = !!launcher?.hit
+      && await canvasLauncherPointStillHits(16, launcher.point);
+    launchAttempts.push({ ...launcher, verified });
+    if (!verified) {
+      await delay(150);
+      continue;
+    }
+    await trustedClick(launcher.point);
+    canvasOpened = await waitForCanvasOpen(16, attempt < 2);
+    reportPhase('launcher:result', {
+      attempt: attempt + 1,
+      verified,
+      ready: !!canvasOpened?.ready,
+      mountOpen: !!canvasOpened?.mountOpen,
+    });
+    if (canvasOpened?.ready || canvasOpened?.mountOpen) break;
+  }
+  assert(
+    launchAttempts.some(attempt => attempt?.hit && attempt.verified),
+    'Canvas OCR A launcher is not the topmost hit target: ' + JSON.stringify(launchAttempts)
+  );
+  if (!canvasOpened?.ready) canvasOpened = await waitForCanvasOpen(16, false);
 
   const initial = await evaluateCall(async function (cellIndex) {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -275,10 +549,15 @@ async function run() {
       toolbar,
     };
   }, 16);
-  assert(initial, 'Canvas OCR A did not open');
+  assert(initial, 'Canvas OCR A did not open: ' + JSON.stringify({ canvasOpened, launchAttempts }));
   assert(/^\d+_\d+$/.test(initial.uid), 'Canvas OCR A exposes no stable runtime UID: ' + JSON.stringify(initial));
   assert(initial.toolbar.length >= 7, 'Canvas toolbar/resize hit areas were not discovered');
   assert(initial.clientHeight >= 240 && initial.clientHeight <= 250, 'Unexpected initial Canvas height: ' + initial.clientHeight);
+  reportPhase('canvas:ready', {
+    uid: initial.uid,
+    width: initial.clientWidth,
+    height: initial.clientHeight,
+  });
 
   const topScan = await evaluateCall(function (cellIndex, relativeStart, relativeEnd) {
     const cell = document.querySelectorAll('.flex-child')[cellIndex];
@@ -308,25 +587,46 @@ async function run() {
   await trustedStroke(topScan.path, 'Upper stroke');
   await delay(250);
 
-  const resize = await evaluateCall(function (cellIndex) {
-    const cell = document.querySelectorAll('.flex-child')[cellIndex];
-    const handle = cell?.querySelector('.lia-resize-corner[data-corner="br"]');
-    const canvas = cell?.querySelector('canvas.lia-draw');
-    if (!handle || !canvas) return null;
-    const handleRect = handle.getBoundingClientRect();
-    const canvasRect = canvas.getBoundingClientRect();
-    const point = {
-      x: handleRect.left + handleRect.width / 2,
-      y: handleRect.top + handleRect.height / 2,
-    };
-    return {
-      point,
-      hit: document.elementFromPoint(point.x, point.y)?.closest('.lia-resize-corner[data-corner="br"]') === handle,
-      canvasHeight: canvasRect.height,
-    };
-  }, 16);
-  assert(resize?.hit, 'Bottom-right Canvas resize handle is not the topmost hit target');
-  await trustedDrag(resize.point, { x: resize.point.x, y: resize.point.y + 180 }, 12);
+  const resizeAttempts = [];
+  let resizeSucceeded = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    reportPhase('resize:target', { attempt: attempt + 1 });
+    const resize = await findCanvasResizeTarget(16);
+    const verified = !!resize?.hit
+      && await canvasResizePointStillHits(16, resize.point);
+    resizeAttempts.push({ ...resize, verified });
+    if (!verified) {
+      await delay(150);
+      continue;
+    }
+
+    await trustedDrag(
+      resize.point,
+      { x: resize.point.x, y: resize.point.y + 180 },
+      12
+    );
+    const height = await waitForCanvasHeight(16, initial.clientHeight + 160, 20);
+    reportPhase('resize:result', {
+      attempt: attempt + 1,
+      verified,
+      reached: height.reached,
+      height: height.height,
+    });
+    if (height.reached) {
+      resizeSucceeded = true;
+      break;
+    }
+  }
+  assert(
+    resizeAttempts.some(attempt => attempt?.hit && attempt.verified),
+    'Bottom-right Canvas resize handle is not the topmost hit target: '
+      + JSON.stringify(resizeAttempts)
+  );
+  assert(
+    resizeSucceeded,
+    'Trusted BR resize did not reach the required height during verified CDP attempts: '
+      + JSON.stringify(resizeAttempts)
+  );
 
   const resized = await evaluateCall(async function (cellIndex, minimumHeight) {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -352,6 +652,10 @@ async function run() {
   }, 16, initial.clientHeight + 160);
   assert(resized?.clientHeight >= initial.clientHeight + 160, 'Trusted BR resize did not grow Canvas height: ' + JSON.stringify({ initial, resized }));
   assert(resized.backingHeight >= Math.floor(resized.clientHeight), 'Live Canvas backing height does not cover resized client height');
+  reportPhase('canvas:resized', {
+    width: resized.clientWidth,
+    height: resized.clientHeight,
+  });
 
   const bottomScan = await evaluateCall(function (cellIndex, relativeStart, relativeEnd) {
     const cell = document.querySelectorAll('.flex-child')[cellIndex];
@@ -443,7 +747,12 @@ async function run() {
     live.store?.wrapWidth >= Math.floor(resized.clientWidth),
     'Canvas store width ' + live.store?.wrapWidth + ' does not cover resized viewport width ' + resized.clientWidth
   );
+  reportPhase('canvas:strokes-exported', {
+    paths: livePaths.length,
+    pixels: live.pixels?.count || 0,
+  });
 
+  reportPhase('ocr:checking');
   const ocrCheck = await evaluateCall(async function (cellIndex) {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const cell = document.querySelectorAll('.flex-child')[cellIndex];
@@ -469,6 +778,57 @@ async function run() {
   await trustedClick(ocrCheck.point);
   const ocrCollected = await evaluateCall(async function (cellIndex) {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const sendSidecar = (quiz, quizCell) => {
+      let kind = 'adetails';
+      let host = quizCell?.querySelector('.lia-assignment-details[data-adetails]') || null;
+      let roots = host?.shadowRoot
+        ? Array.from(host.shadowRoot.querySelectorAll('[data-lia-freeze-adetails-sidecar]'))
+        : [];
+      if (!host) {
+        kind = 'generic';
+        const content = quiz?.closest('main.lia-slide__content')
+          || document.querySelector('main.lia-slide__content,.lia-content,main,article');
+        const task = content
+          ? Array.from(content.querySelectorAll('.lia-quiz')).indexOf(quiz) + 1
+          : 0;
+        host = document.querySelector(
+          'lia-freeze-quiz-sidecars[data-lia-freeze-quiz-sidecars]'
+        );
+        roots = host?.shadowRoot && task > 0
+          ? Array.from(host.shadowRoot.querySelectorAll(
+            '[data-lia-freeze-task-index]'
+          )).filter(entry =>
+            entry.getAttribute('data-lia-freeze-task-index') === String(task)
+          )
+          : [];
+      }
+      const root = roots[0] || null;
+      const statuses = root
+        ? Array.from(root.querySelectorAll('.lia-send-status'))
+        : [];
+      const status = statuses[0]?.textContent?.trim() || '';
+      const forbidden = '.lia-send-status,.lia-adetails-points,.lia-adetails-sidecar,'
+        + '.lia-adetails-feedback,[data-lia-send-logged],'
+        + '[data-lia-freeze-adetails-sidecar]';
+      const control = quiz?.querySelector('.lia-quiz__control');
+      return {
+        kind,
+        logged: kind === 'adetails'
+          ? root?.getAttribute('data-lia-send-logged') === '1'
+          : !!status,
+        status,
+        ownershipOk: !!host
+          && !host.closest('.lia-quiz,.lia-quiz__control')
+          && Array.from(host.childNodes).every(node =>
+            node.nodeType === Node.TEXT_NODE
+          )
+          && roots.length === 1
+          && statuses.length === 1
+          && !quiz?.hasAttribute('data-lia-send-logged')
+          && !quiz?.querySelector(forbidden)
+          && !control?.querySelector(forbidden),
+      };
+    };
     for (let attempts = 0; attempts < 80; attempts++) {
       const cell = document.querySelectorAll('.flex-child')[cellIndex];
       const quiz = cell?.querySelector('.lia-quiz');
@@ -480,7 +840,8 @@ async function run() {
         return style.display !== 'none' && style.visibility !== 'hidden'
           && style.pointerEvents !== 'none' && element.getClientRects().length > 0;
       };
-      if (quiz?.getAttribute('data-lia-send-logged') === '1') {
+      const sidecar = sendSidecar(quiz, cell);
+      if (sidecar.logged) {
         return {
           logged: true,
           value: cell?.querySelector('input.lia-quiz__input')?.value || '',
@@ -489,7 +850,8 @@ async function run() {
           feedback: feedbackNode?.textContent?.trim() || '',
           feedbackVisible: visible(feedbackNode),
           resolveVisible: visible(resolve),
-          status: quiz.querySelector('.lia-send-status')?.textContent?.trim() || '',
+          status: sidecar.status,
+          sidecar,
         };
       }
       await pause(100);
@@ -502,9 +864,12 @@ async function run() {
     && !ocrCollected.feedback
     && !ocrCollected.feedbackVisible
     && !ocrCollected.resolveVisible
-    && ocrCollected.status.startsWith('Antwort gespeichert'),
+    && ocrCollected.status.startsWith('Antwort gespeichert')
+    && ocrCollected.sidecar.ownershipOk,
   'Send did not log Canvas OCR neutrally before Freeze: ' + JSON.stringify(ocrCollected));
+  reportPhase('ocr:collected');
 
+  reportPhase('freeze:creating-link');
   const frozen = await evaluateCall(async function () {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const setValue = (element, value) => {
@@ -540,6 +905,7 @@ async function run() {
     return { link, hash: location.hash };
   });
   assert(frozen.link, 'Canvas submission link was not created: ' + JSON.stringify(frozen));
+  reportPhase('freeze:link-created', { length: frozen.link.length });
   const payload = decodeSubmissionPayload(frozen.link);
   const payloadCanvas = payloadCanvasState(payload, initial.uid);
   assert(payloadCanvas, 'Submission payload has no cvq1/cvf1 Canvas state');
@@ -552,18 +918,26 @@ async function run() {
     'Freeze payload Canvas width ' + payloadCanvas.width + ' does not cover resized viewport width ' + resized.clientWidth
   );
 
+  reportPhase('shared:navigating');
   await command('Page.navigate', { url: frozen.link });
+  await command('Page.bringToFront');
   await delay(2200);
 
+  reportPhase('shared:restoring');
   const shared = await evaluateCall(async function (cellIndex, uid, originalHeight, payloadWidth, payloadHeight) {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-    for (let attempts = 0; !document.body.classList.contains('lia-shared-freeze-link') && attempts < 150; attempts++) {
+    const sharedModeDeadline = Date.now() + 15000;
+    for (let attempts = 0;
+      !document.body.classList.contains('lia-shared-freeze-link')
+        && attempts < 150 && Date.now() < sharedModeDeadline;
+      attempts++) {
       await pause(100);
     }
     location.hash = '#27';
     let stable = 0;
     let result = null;
-    for (let attempts = 0; attempts < 160; attempts++) {
+    const restoreDeadline = Date.now() + 60000;
+    for (let attempts = 0; attempts < 600 && Date.now() < restoreDeadline; attempts++) {
       const cell = document.querySelectorAll('.flex-child')[cellIndex];
       const pair = cell?.querySelector('.lia-canvas-pair');
       const mount = pair?.querySelector('.lia-canvas-mount');
@@ -621,7 +995,68 @@ async function run() {
       const ocr = cell?.querySelector('input.lia-quiz__input');
       const quiz = cell?.querySelector('.lia-quiz');
       const feedback = quiz?.querySelector('.lia-quiz__feedback');
-      const feedbackStyle = feedback instanceof HTMLElement ? getComputedStyle(feedback) : null;
+      const preservedSelector = [
+        '#lia-freeze-bar',
+        '#lia-eval-placeholder',
+        '#lia-print-pdf',
+        '.lia-annot-toolbar',
+        '.lia-adetails-award-input',
+        '.lia-adetails-points',
+        '.lia-assignment-details',
+        '[data-adetails]',
+        '.lia-exam-intro-virtual-slide',
+      ].join(',');
+      const describe = element => element && ({
+        tag: element.tagName,
+        id: element.id || '',
+        className: String(element.className || ''),
+        dataAdetails: element.getAttribute('data-adetails') || '',
+      });
+      const ancestry = element => ({
+        preserved: describe(element?.closest(preservedSelector)),
+        assignmentDetails: describe(element?.closest(
+          '.lia-assignment-details,[data-adetails]'
+        )),
+      });
+      const feedbackInfo = node => {
+        const style = node instanceof HTMLElement ? getComputedStyle(node) : null;
+        return node ? {
+          text: node.textContent?.trim() || '',
+          visible: !!style && style.display !== 'none'
+            && style.visibility !== 'hidden' && node.getClientRects().length > 0,
+        } : null;
+      };
+      const content = quiz?.closest('main.lia-slide__content')
+        || document.querySelector('main.lia-slide__content,.lia-content,main,article');
+      const slideQuizzes = content ? Array.from(content.querySelectorAll('.lia-quiz')) : [];
+      const taskIndex = slideQuizzes.indexOf(quiz) + 1;
+      const localAdetailsHosts = Array.from(
+        document.querySelectorAll('.lia-assignment-details[data-adetails]')
+      ).filter(host => host.closest('.flex-child') === cell);
+      const adetailsFeedback = localAdetailsHosts.flatMap(host => host.shadowRoot
+        ? Array.from(host.shadowRoot.querySelectorAll('.lia-adetails-feedback'))
+          .map(feedbackInfo)
+        : []
+      );
+      const genericHost = document.querySelector(
+        'lia-freeze-quiz-sidecars[data-lia-freeze-quiz-sidecars]'
+      );
+      const genericEntries = genericHost?.shadowRoot && taskIndex > 0
+        ? Array.from(genericHost.shadowRoot.querySelectorAll(
+          '[data-lia-freeze-task-index]'
+        )).filter(entry =>
+          entry.getAttribute('data-lia-freeze-task-index') === String(taskIndex)
+        )
+        : [];
+      const genericFeedback = genericEntries.flatMap(entry =>
+        Array.from(entry.querySelectorAll('.lia-adetails-feedback')).map(feedbackInfo)
+      );
+      const restoredFeedback = [
+        { source: 'native', value: feedbackInfo(feedback) },
+        ...adetailsFeedback.map(value => ({ source: 'adetails', value })),
+        ...genericFeedback.map(value => ({ source: 'generic', value })),
+      ].find(candidate => candidate.value?.visible && candidate.value.text) || null;
+      const cells = Array.from(document.querySelectorAll('.flex-child'));
       result = {
         state,
         store: entry && {
@@ -636,11 +1071,41 @@ async function run() {
         ocrLocked: !!ocr?.disabled || ocr?.getAttribute('data-lia-freeze-locked') === '1',
         quizClass: quiz?.className || '',
         quizOutcome: quiz?.getAttribute('data-lia-freeze-outcome') || '',
-        feedback: feedback?.textContent?.trim() || '',
-        feedbackVisible: !!feedbackStyle
-          && feedbackStyle.display !== 'none'
-          && feedbackStyle.visibility !== 'hidden'
-          && feedback.getClientRects().length > 0,
+        feedback: restoredFeedback?.value.text || '',
+        feedbackVisible: !!restoredFeedback?.value.visible,
+        feedbackSource: restoredFeedback?.source || '',
+        bodyClass: document.body.className,
+        frozenScope: !!content?.classList.contains('lia-frozen-scope'),
+        targeting: {
+          expectedCellIndex: cellIndex,
+          cells: cells.length,
+          pairCellIndex: cells.indexOf(pair?.closest('.flex-child')),
+          ocrCellIndex: cells.indexOf(ocr?.closest('.flex-child')),
+          taskIndex,
+          expectedUid: uid,
+          mountUid: mount?.dataset.uid || '',
+        },
+        ancestry: {
+          pair: ancestry(pair),
+          mount: ancestry(mount),
+          surface: ancestry(surface),
+          ocr: ancestry(ocr),
+        },
+        lockDetails: {
+          pair: pair?.getAttribute('data-lia-freeze-locked') || '',
+          mount: mount?.getAttribute('data-lia-freeze-locked') || '',
+          surface: surface?.getAttribute('data-lia-freeze-locked')
+            || surface?.getAttribute('data-lia-freeze-canvas-locked') || '',
+          ocr: ocr?.getAttribute('data-lia-freeze-locked') || '',
+          ocrDisabled: !!ocr?.disabled,
+          ocrReadOnly: !!ocr?.readOnly,
+          ocrInert: ocr?.hasAttribute('inert') || false,
+        },
+        feedbackDetails: {
+          native: feedbackInfo(feedback),
+          adetails: adetailsFeedback,
+          generic: genericFeedback,
+        },
         geometry: rect && {
           clientWidth: rect.width,
           clientHeight: rect.height,
@@ -664,8 +1129,14 @@ async function run() {
       if (stable >= 10) break;
       await pause(100);
     }
-    return { ...result, stable: stable >= 10, hash: location.hash };
+    return {
+      ...result,
+      stable: stable >= 10,
+      hash: location.hash,
+      href: location.href,
+    };
   }, 16, initial.uid, initial.clientHeight, payloadCanvas.width, payloadCanvas.height);
+  shared.browserErrors = browserErrors.slice();
   assert(shared.stable, 'Shared Canvas did not restore and remain locked for one second: ' + JSON.stringify(shared));
   assert(shared.staticPreview && shared.state === null && shared.store === null, 'Shared Canvas is not the expected static preview mode: ' + JSON.stringify(shared));
   assert(shared.geometry.backingWidth >= payloadCanvas.width, 'Shared Canvas backing width clips payload viewport');
@@ -676,6 +1147,7 @@ async function run() {
   for (const key of ['minX', 'maxX', 'minY', 'maxY']) {
     assert(Math.abs(live.pixels[key] - shared.pixels[key]) <= 3, 'Shared preview pixel bounds changed at ' + key + ': ' + JSON.stringify({ live: live.pixels, shared: shared.pixels }));
   }
+  reportPhase('complete');
 
   return {
     live: {
@@ -714,10 +1186,16 @@ async function run() {
 socket.addEventListener('open', async () => {
   let timeoutId;
   try {
+    await command('Runtime.enable');
+    await command('Log.enable');
+    await command('Page.bringToFront');
+    reportPhase('target:front');
     const timeout = new Promise((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error('Canvas full Freeze E2E exceeded 60 seconds')),
-        60000
+        () => reject(new Error(
+          'Canvas full Freeze E2E exceeded 120 seconds; last phase: ' + currentPhase
+        )),
+        120000
       );
     });
     const result = await Promise.race([

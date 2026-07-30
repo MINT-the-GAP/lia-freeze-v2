@@ -103,22 +103,21 @@ test('counts only learner Check clicks, keeps input logging separate, and resets
   };
 
   const roots = [];
+  let forbiddenAppends = 0;
   const makeQuiz = () => {
-    let status = null;
+    let statusText = '';
     const attributes = {};
     const control = {
-      appendChild(element) {
-        status = element;
-      },
+      appendChild() { forbiddenAppends += 1; },
     };
     const root = {
       nodeType: 1,
       ownerDocument: document,
       querySelector(selector) {
-        if (selector === '.lia-send-status') return status;
         if (selector === '.lia-quiz__control') return control;
         return null;
       },
+      appendChild() { forbiddenAppends += 1; },
       setAttribute(name, value) {
         attributes[name] = value;
       },
@@ -138,7 +137,14 @@ test('counts only learner Check clicks, keeps input logging separate, and resets
       },
     };
     roots.push(root);
-    return { root, button, input, get status() { return status; }, attributes };
+    return {
+      root,
+      button,
+      input,
+      get status() { return { textContent: statusText }; },
+      set status(value) { statusText = value; },
+      attributes,
+    };
   };
   const first = makeQuiz();
   const second = makeQuiz();
@@ -151,6 +157,15 @@ test('counts only learner Check clicks, keeps input logging separate, and resets
     getHash: () => '#7',
     getRuntimeWindows: () => [runtimeWindow],
     getContentHost: () => host,
+    setQuizStatus: (root, contentHost, text) => {
+      assert.equal(contentHost, host);
+      const quiz = root === first.root ? first : second;
+      quiz.status = text;
+    },
+    clearQuizStatuses: () => {
+      first.status = '';
+      second.status = '';
+    },
     onLogged: () => { logged += 1; },
   };
   const eventFor = target => ({
@@ -176,6 +191,8 @@ test('counts only learner Check clicks, keeps input logging separate, and resets
   });
   assert.equal(logged, 2);
   assert.match(first.status.textContent, /Prüfen-Klicks: 2/);
+  assert.equal(forbiddenAppends, 0);
+  assert.deepEqual(first.attributes, {});
 
   setDeferredSendPhase('grading');
   listeners.click(eventFor(first.button));

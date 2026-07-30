@@ -1,6 +1,6 @@
 <!--
 author:   MINT-the-GAP, Martin Lommatzsch, Jihad Hyadi
-version:  1.0.0
+version:  1.0.1
 language: en
 narrator: US English Female
 edit: true
@@ -65,8 +65,10 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 <div data-snapshot-eval="1" style="display:none;"></div>
 @end
 
-@ADetails
-<span class="lia-assignment-details" data-adetails="@0" style="display:none !important;"></span>
+@ADetails: @ADetails_(@uid,`@0`)
+
+@ADetails_
+<lia-adetails class="lia-assignment-details" data-adetails-instance="lia-adetails-@0" data-adetails="@1"></lia-adetails>
 @end
 
 @Exam
@@ -236,6 +238,34 @@ Used by `@Auswertung` to compute the total score.
 
 - First argument: point value (default: 1)
 - Optional second argument: comma-separated topic tags
+
+**DOM ownership and the internal ADetails host.**
+
+LiaScript/Elm owns the light-DOM children of `.lia-quiz`, including the complete
+`.lia-quiz__control` row. ADetails badges, Send statuses and restored-feedback
+fallbacks never insert, move or replace nodes in that tree. `@ADetails` expands
+to a declarative `<lia-adetails>` sibling immediately after its quiz. LiaScript's
+`@uid` supplies a unique declarative instance token; legacy
+`.lia-assignment-details` spans are upgraded in place and receive a deterministic
+slide/marker fallback ID. Freeze adds no light-DOM children to the host; an empty
+Elm-owned placeholder text node emitted by LiaScript remains untouched.
+
+The points badge and teacher award input live only inside that host's Freeze-owned
+Shadow DOM. Deferred-Send status and restored-feedback fallback use the same host
+when `@ADetails` is present. A quiz without a marker uses one body-level
+`<lia-freeze-quiz-sidecars>` Shadow portal outside the Elm application tree, so it
+keeps the legacy feedback without changing quiz children. Repeated refreshes reuse
+the same hosts, a document-level observer binds quizzes that render later, and
+disconnected instances release their listeners and registry entries independently.
+Shadow content is materialized as plain text only inside the detached print/PDF
+clone, where Elm has no ownership.
+
+The real `@KonstruktionQuiz` + `@resetter` + `@ADetails` browser regression pins
+the not-yet-tagged Resetter ownership fix at commit
+`eead3d7f4ff93888eac8a970be4ad5951b4a81db`.
+
+The template header, `package.json` and lockfile intentionally share the same
+release version.
 
 ---
 

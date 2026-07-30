@@ -23,6 +23,20 @@ export type NativeDomKind =
 
 export type NativeDomOutcome = "correct" | "wrong" | "resolved" | "open";
 
+export type NativeDomFeedbackRenderer = (
+  quizRoot: Element,
+  contentHost: Element,
+  feedback: { text: string; hidden: boolean; appearance?: string[] } | null
+) => boolean;
+
+let nativeDomFeedbackRenderer: NativeDomFeedbackRenderer | null = null;
+
+export function configureNativeDomFeedbackRenderer(
+  renderer: NativeDomFeedbackRenderer | null
+): void {
+  nativeDomFeedbackRenderer = renderer;
+}
+
 export type NativeDomControlType =
   | "text"
   | "textarea"
@@ -1016,14 +1030,22 @@ function restoreSelection(root: Element, state?: NativeDomSelectionState): void 
   if (dropdown) addAppearance(dropdown, state.appearance);
 }
 
-function restoreFeedback(root: Element, state?: NativeDomFeedbackState): void {
+function restoreFeedback(
+  root: Element,
+  contentHost: Element,
+  state?: NativeDomFeedbackState
+): void {
   if (!state) return;
-  let feedback = root.querySelector(".lia-quiz__feedback");
+  const feedback = root.querySelector(".lia-quiz__feedback");
   if (!feedback) {
-    feedback = document.createElement("div");
-    feedback.className = "lia-quiz__feedback";
-    root.appendChild(feedback);
+    nativeDomFeedbackRenderer?.(root, contentHost, {
+      text: state.text,
+      hidden: state.hidden === 1,
+      appearance: state.appearance,
+    });
+    return;
   }
+  nativeDomFeedbackRenderer?.(root, contentHost, null);
   APPEARANCE_CLASSES.forEach(name => feedback?.classList.remove(name));
   feedback.textContent = state.text;
   if (feedback instanceof HTMLElement) feedback.hidden = state.hidden === 1;
@@ -1349,7 +1371,7 @@ export function restoreNativeDomForSlide(
     restoreSelection(taskScope, task.selection);
     restoreTiles(quizRoot, root, task.tiles);
     restoreOrthography(quizRoot, root, task.orthography);
-    restoreFeedback(quizRoot, task.feedback);
+    restoreFeedback(quizRoot, root, task.feedback);
     quizRoot.classList.remove("open", "solved", "resolved", "failed");
     const rootAppearance = normalizeNativeDomRootAppearance(
       task.outcome,

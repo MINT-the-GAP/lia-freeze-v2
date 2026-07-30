@@ -26,6 +26,8 @@ export interface DeferredSendContext {
   getHash(): string;
   getRuntimeWindows(): Window[];
   getContentHost(targetDocument: Document): Element | null;
+  setQuizStatus?(root: Element, contentHost: Element, text: string): void;
+  clearQuizStatuses?(targetDocument: Document): void;
   onLogged?(task: DeferredSendTask): void;
   onReviewResolve?(task: DeferredSendTask): void;
   onReviewMarkerSolve?(): void;
@@ -85,18 +87,15 @@ function taskForQuizRoot(root: Element): DeferredSendTask | null {
 }
 
 function ensureLoggedStatus(root: Element, checkCount: number): void {
-  let status = root.querySelector<HTMLElement>(".lia-send-status");
-  if (!status) {
-    status = root.ownerDocument.createElement("div");
-    status.className = "lia-send-status";
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    const control = root.querySelector(".lia-quiz__control");
-    (control ?? root).appendChild(status);
-  }
-  status.textContent = "Antwort gespeichert. Prüfen-Klicks: " + checkCount
-    + ". Die Auswertung erfolgt nach der Abgabe.";
-  root.setAttribute("data-lia-send-logged", "1");
+  if (!context) return;
+  const host = context.getContentHost(root.ownerDocument);
+  if (!host) return;
+  context.setQuizStatus?.(
+    root,
+    host,
+    "Antwort gespeichert. Prüfen-Klicks: " + checkCount
+      + ". Die Auswertung erfolgt nach der Abgabe."
+  );
 }
 
 function logQuizRoot(root: Element, showStatus: boolean, countCheck = false): void {
@@ -184,9 +183,8 @@ body.lia-send-grading .hlq-proxy [data-hlq-act="solve"] {
   display: none !important;
   visibility: hidden !important;
 }
-.lia-send-status {
+.lia-assignment-details[data-adetails]::part(send-status) {
   display: block;
-  flex-basis: 100%;
   margin-top: .45rem;
   font-weight: 700;
   color: var(--lia-course-fg, currentColor);
@@ -207,7 +205,7 @@ function applyPhaseToDocument(targetDocument: Document): void {
   SEND_PHASE_CLASSES.forEach(name => body.classList.remove(name));
   if (phase !== "off") body.classList.add("lia-send-" + phase);
   if (phase !== "collect") {
-    targetDocument.querySelectorAll(".lia-send-status").forEach(item => item.remove());
+    context?.clearQuizStatuses?.(targetDocument);
   }
 }
 

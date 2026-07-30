@@ -3,6 +3,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const ts = require('typescript');
+const { parseHTML } = require('linkedom');
 
 function loadTypeScriptModule(fileName) {
   const source = readFileSync(fileName, 'utf8');
@@ -283,4 +284,57 @@ test('identifies Proposal sources by native address instead of target id', async
 
   assert.equal(tileSourceIdentity(bank), "value:[2,0]");
   assert.equal(tileSourceIdentity(placed), "value:[2,0]");
+});
+
+test('routes missing native feedback to a sidecar without appending to the Elm quiz', async () => {
+  const {
+    configureNativeDomFeedbackRenderer,
+    restoreNativeDomForSlide,
+  } = await nativeDomPromise;
+  const { document } = parseHTML(`
+    <html><body><main>
+      <div class="lia-quiz lia-quiz-multi open">
+        <div class="lia-quiz__answers"></div>
+        <div class="lia-quiz__control"><button class="lia-quiz__check">Check</button></div>
+      </div>
+    </main></body></html>
+  `);
+  const host = document.querySelector('main');
+  const quiz = document.querySelector('.lia-quiz');
+  const beforeChildren = Array.from(quiz.children);
+  const rendered = [];
+  configureNativeDomFeedbackRenderer((root, contentHost, feedback) => {
+    rendered.push({ root, contentHost, feedback });
+    return true;
+  });
+
+  const result = restoreNativeDomForSlide({
+    version: 1,
+    slides: {
+      '#1': [{
+        taskIndex: 0,
+        nativeIndex: 0,
+        table: 'quiz',
+        kind: 'text',
+        controls: [],
+        touched: 1,
+        outcome: 'correct',
+        feedback: { text: 'Correct immediately', hidden: 0 },
+      }],
+    },
+  }, '#1', host);
+
+  assert.deepEqual(result, { applied: 1, expected: 1 });
+  assert.deepEqual(Array.from(quiz.children), beforeChildren);
+  assert.equal(quiz.querySelector('.lia-quiz__feedback'), null);
+  assert.equal(rendered.length, 1);
+  assert.equal(rendered[0].root, quiz);
+  assert.equal(rendered[0].contentHost, host);
+  assert.deepEqual(rendered[0].feedback, {
+    text: 'Correct immediately',
+    hidden: false,
+    appearance: undefined,
+  });
+
+  configureNativeDomFeedbackRenderer(null);
 });

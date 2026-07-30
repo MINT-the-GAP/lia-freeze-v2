@@ -8,6 +8,12 @@ import {
   refreshDeferredSendMode,
   setDeferredSendPhase,
 } from './send-mode';
+import {
+  clearAssignmentDetailSendStatuses,
+  materializeAssignmentDetailSidecarsForPrint,
+  setAssignmentDetailFeedback,
+  setAssignmentDetailSendStatus,
+} from './adetails-dom';
 import { installPortIntercept } from "./port";
 import {
   activateAnnotationSnapshot,
@@ -90,6 +96,7 @@ import {
 import {
   captureNativeDomNow,
   captureNativeDomTaskOutcomeNow,
+  configureNativeDomFeedbackRenderer,
   exportNativeDomFallback,
   installNativeDomTracker,
   mergeNativeDomTaskSnapshots,
@@ -1820,6 +1827,7 @@ function waitForPrintableSlide(): Promise<void> {
 
 function clonePrintableSlide(source: Element, slide: DeclaredSlide): HTMLElement {
   const clone = source.cloneNode(true) as HTMLElement;
+  materializeAssignmentDetailSidecarsForPrint(source, clone);
   clone.style.setProperty('display', 'block', 'important');
   clone.style.setProperty('position', 'static', 'important');
   clone.style.setProperty('width', '100%', 'important');
@@ -1948,10 +1956,15 @@ async function printFrozenEvaluation(): Promise<void> {
 
 async function init(): Promise<void> {
   injectRuntimeCSS();
+  configureNativeDomFeedbackRenderer(setAssignmentDetailFeedback);
   configureDeferredSendMode({
     getHash: getCurrentHash,
     getRuntimeWindows: sameOriginRuntimeWindows,
     getContentHost: getContentHostForDocument,
+    setQuizStatus: (root, host, text) => {
+      setAssignmentDetailSendStatus(root, host, text);
+    },
+    clearQuizStatuses: clearAssignmentDetailSendStatuses,
     onLogged: () => captureNativeDomNow(getCurrentHash()),
     onReviewResolve: task => {
       const key = makeDeferredSendTaskKey(task.hash, task.taskIndex);

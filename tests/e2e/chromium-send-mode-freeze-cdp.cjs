@@ -125,7 +125,21 @@ socket.addEventListener('close', () => {
   closeSocket(new Error('CDP socket closed with commands pending'));
 });
 
+function assertAdetailsBoundary(state, label) {
+  const ownership = state.ownership || {};
+  assert(ownership.hostExists
+      && ownership.hostOutsideQuiz
+      && ownership.shadowRootExists
+      && ownership.sidecarRootCount === 1
+      && ownership.statusCount === 1,
+    label + ' does not use exactly one external ADetails Shadow-DOM sidecar: ' +
+    JSON.stringify(state));
+  assert(!ownership.quizHasSendLogged && ownership.quizLightDomFreezeStatusCount === 0,
+    label + ' leaked Freeze status into the quiz light DOM: ' + JSON.stringify(state));
+}
+
 function assertCollectState(state, label) {
+  assertAdetailsBoundary(state, label);
   assert(state.phase === 'collect',
     label + ' was not in collect phase: ' + JSON.stringify(state));
   assert(state.open,
@@ -147,6 +161,7 @@ function assertCollectState(state, label) {
 }
 
 function assertCorrectReview(state, label) {
+  assertAdetailsBoundary(state, label);
   assert(state.phase === 'review' && state.frozen,
     label + ' is not a frozen Send review: ' + JSON.stringify(state));
   assert(/\b(?:solved|success|correct)\b/i.test(
@@ -161,6 +176,7 @@ function assertCorrectReview(state, label) {
 }
 
 function assertWrongReview(state, label) {
+  assertAdetailsBoundary(state, label);
   assert(state.phase === 'review' && state.frozen,
     label + ' is not a frozen Send review: ' + JSON.stringify(state));
   assert(/\b(?:failed|wrong|error)\b/i.test(
@@ -184,6 +200,7 @@ function assertWrongReview(state, label) {
 }
 
 function assertUntouchedReview(state, label) {
+  assertAdetailsBoundary(state, label);
   assert(state.phase === 'review' && state.frozen,
     label + ' is not a frozen Send review: ' + JSON.stringify(state));
   assert(state.open && !state.outcomeClass && !state.outcome && !state.feedback.text,
@@ -279,11 +296,62 @@ async function run() {
           || control.hasAttribute('inert'),
       };
     };
+    const adetailsForQuiz = root => {
+      const markerSelector = '.lia-assignment-details[data-adetails]';
+      const contentHost = document.querySelector('main.lia-slide__content')
+        ?? document.querySelector('.lia-content')
+        ?? document.querySelector('main')
+        ?? document.querySelector('article')
+        ?? document.body;
+      const markers = Array.from(contentHost.querySelectorAll(markerSelector))
+        .filter(marker => !marker.closest(
+          '#lia-freeze-bar,.lia-submit-box,#lia-print-slides'
+        ));
+      const host = markers.find(marker => {
+        const localScope = marker.closest('.flex-child') ?? contentHost;
+        const ordered = Array.from(localScope.querySelectorAll(
+          '.lia-quiz__check,' + markerSelector
+        ));
+        const markerIndex = ordered.indexOf(marker);
+        if (markerIndex < 0) return false;
+        for (let index = markerIndex - 1; index >= 0; index--) {
+          const candidate = ordered[index];
+          if (!candidate.matches('.lia-quiz__check')) continue;
+          if (candidate.closest('#lia-freeze-bar,.lia-submit-box,#lia-print-slides')) {
+            continue;
+          }
+          return candidate.closest('.lia-quiz') === root;
+        }
+        return false;
+      }) ?? null;
+      const shadow = host?.shadowRoot ?? null;
+      const sidecarRoots = shadow
+        ? Array.from(shadow.querySelectorAll('[data-lia-freeze-adetails-sidecar]'))
+        : [];
+      const sidecarRoot = sidecarRoots[0] ?? null;
+      const statuses = sidecarRoot
+        ? Array.from(sidecarRoot.querySelectorAll('.lia-send-status'))
+        : [];
+      return {
+        host,
+        shadow,
+        sidecarRoots,
+        sidecarRoot,
+        statuses,
+        status: statuses[0] ?? null,
+      };
+    };
     const readQuiz = () => {
       const root = document.querySelector('.lia-quiz');
       if (!root) throw new Error('Native quiz root is missing on ' + location.hash);
       const scope = root.parentElement ?? root;
-      const feedback = root.querySelector('.lia-quiz__feedback');
+      const adetails = adetailsForQuiz(root);
+      const shadowFeedback = adetails.sidecarRoot?.querySelector(
+        '.lia-adetails-feedback'
+      );
+      const feedback = shadowFeedback?.textContent?.trim()
+        ? shadowFeedback
+        : root.querySelector('.lia-quiz__feedback');
       const resolve = root.querySelector('.lia-quiz__resolve');
       const check = root.querySelector('.lia-quiz__check');
       const textControl = scope.querySelector(
@@ -306,7 +374,7 @@ async function run() {
         open: /\bopen\b/i.test(className),
         outcomeClass: /\b(?:solved|resolved|failed|success)\b/i.test(className),
         outcome: root.getAttribute('data-lia-freeze-outcome') || '',
-        sendLogged: root.getAttribute('data-lia-send-logged') === '1',
+        sendLogged: adetails.sidecarRoot?.getAttribute('data-lia-send-logged') === '1',
         failureMarkers: scope.querySelectorAll(
           '.is-failure,.text-error,.text-danger,[data-lia-freeze-outcome=wrong]'
         ).length,
@@ -315,7 +383,19 @@ async function run() {
           className: feedback?.className || '',
           visible: visible(feedback),
         },
-        status: root.querySelector('.lia-send-status')?.textContent?.trim() || '',
+        status: adetails.status?.textContent?.trim() || '',
+        ownership: {
+          hostExists: !!adetails.host,
+          hostOutsideQuiz: !!adetails.host
+            && !adetails.host.closest('.lia-quiz,.lia-quiz__control'),
+          shadowRootExists: !!adetails.shadow,
+          sidecarRootCount: adetails.sidecarRoots.length,
+          statusCount: adetails.statuses.length,
+          quizHasSendLogged: root.hasAttribute('data-lia-send-logged'),
+          quizLightDomFreezeStatusCount: root.querySelectorAll(
+            '.lia-send-status,[data-lia-send-logged],[data-lia-freeze-adetails-sidecar]'
+          ).length,
+        },
         textValue: textControl?.value || '',
         textControl: controlState(textControl),
         radios: radios.map(radio => ({
@@ -388,7 +468,7 @@ async function run() {
     correctCheck.click();
     correctCheck.click();
     await waitFor('neutral status for correct answer', () =>
-      correctRoot.querySelector('.lia-send-status')?.textContent?.includes('Antwort gespeichert')
+      adetailsForQuiz(correctRoot).status?.textContent?.includes('Antwort gespeichert')
     );
     const collectedCorrect = readQuiz();
 
@@ -403,7 +483,7 @@ async function run() {
     await pause(100);
     wrongRoot.querySelector('.lia-quiz__check').click();
     await waitFor('neutral status for wrong answer', () =>
-      wrongRoot.querySelector('.lia-send-status')?.textContent?.includes('Antwort gespeichert')
+      adetailsForQuiz(wrongRoot).status?.textContent?.includes('Antwort gespeichert')
     );
     const collectedWrong = readQuiz();
 
@@ -471,6 +551,7 @@ async function run() {
     'One live Check click was not shown neutrally: ' + live.collected.wrong.status);
   assert(live.collected.wrong.radios[0]?.checked && !live.collected.wrong.radios[1]?.checked,
     'Live wrong choice was not retained: ' + JSON.stringify(live.collected.wrong.radios));
+  assertAdetailsBoundary(live.collected.untouched, 'Live untouched quiz');
   assert(live.collected.untouched.phase === 'collect'
       && live.collected.untouched.open
       && !live.collected.untouched.sendLogged
@@ -520,11 +601,62 @@ async function run() {
           || control.hasAttribute('inert'),
       };
     };
+    const adetailsForQuiz = root => {
+      const markerSelector = '.lia-assignment-details[data-adetails]';
+      const contentHost = document.querySelector('main.lia-slide__content')
+        ?? document.querySelector('.lia-content')
+        ?? document.querySelector('main')
+        ?? document.querySelector('article')
+        ?? document.body;
+      const markers = Array.from(contentHost.querySelectorAll(markerSelector))
+        .filter(marker => !marker.closest(
+          '#lia-freeze-bar,.lia-submit-box,#lia-print-slides'
+        ));
+      const host = markers.find(marker => {
+        const localScope = marker.closest('.flex-child') ?? contentHost;
+        const ordered = Array.from(localScope.querySelectorAll(
+          '.lia-quiz__check,' + markerSelector
+        ));
+        const markerIndex = ordered.indexOf(marker);
+        if (markerIndex < 0) return false;
+        for (let index = markerIndex - 1; index >= 0; index--) {
+          const candidate = ordered[index];
+          if (!candidate.matches('.lia-quiz__check')) continue;
+          if (candidate.closest('#lia-freeze-bar,.lia-submit-box,#lia-print-slides')) {
+            continue;
+          }
+          return candidate.closest('.lia-quiz') === root;
+        }
+        return false;
+      }) ?? null;
+      const shadow = host?.shadowRoot ?? null;
+      const sidecarRoots = shadow
+        ? Array.from(shadow.querySelectorAll('[data-lia-freeze-adetails-sidecar]'))
+        : [];
+      const sidecarRoot = sidecarRoots[0] ?? null;
+      const statuses = sidecarRoot
+        ? Array.from(sidecarRoot.querySelectorAll('.lia-send-status'))
+        : [];
+      return {
+        host,
+        shadow,
+        sidecarRoots,
+        sidecarRoot,
+        statuses,
+        status: statuses[0] ?? null,
+      };
+    };
     const readQuiz = () => {
       const root = document.querySelector('.lia-quiz');
       if (!root) throw new Error('Native quiz root is missing on ' + location.hash);
       const scope = root.parentElement ?? root;
-      const feedback = root.querySelector('.lia-quiz__feedback');
+      const adetails = adetailsForQuiz(root);
+      const shadowFeedback = adetails.sidecarRoot?.querySelector(
+        '.lia-adetails-feedback'
+      );
+      const feedback = shadowFeedback?.textContent?.trim()
+        ? shadowFeedback
+        : root.querySelector('.lia-quiz__feedback');
       const resolve = root.querySelector('.lia-quiz__resolve');
       const check = root.querySelector('.lia-quiz__check');
       const textControl = scope.querySelector(
@@ -547,7 +679,7 @@ async function run() {
         open: /\bopen\b/i.test(className),
         outcomeClass: /\b(?:solved|resolved|failed|success)\b/i.test(className),
         outcome: root.getAttribute('data-lia-freeze-outcome') || '',
-        sendLogged: root.getAttribute('data-lia-send-logged') === '1',
+        sendLogged: adetails.sidecarRoot?.getAttribute('data-lia-send-logged') === '1',
         failureMarkers: scope.querySelectorAll(
           '.is-failure,.text-error,.text-danger,[data-lia-freeze-outcome=wrong]'
         ).length,
@@ -556,7 +688,19 @@ async function run() {
           className: feedback?.className || '',
           visible: visible(feedback),
         },
-        status: root.querySelector('.lia-send-status')?.textContent?.trim() || '',
+        status: adetails.status?.textContent?.trim() || '',
+        ownership: {
+          hostExists: !!adetails.host,
+          hostOutsideQuiz: !!adetails.host
+            && !adetails.host.closest('.lia-quiz,.lia-quiz__control'),
+          shadowRootExists: !!adetails.shadow,
+          sidecarRootCount: adetails.sidecarRoots.length,
+          statusCount: adetails.statuses.length,
+          quizHasSendLogged: root.hasAttribute('data-lia-send-logged'),
+          quizLightDomFreezeStatusCount: root.querySelectorAll(
+            '.lia-send-status,[data-lia-send-logged],[data-lia-freeze-adetails-sidecar]'
+          ).length,
+        },
         textValue: textControl?.value || '',
         textControl: controlState(textControl),
         radios: radios.map(radio => ({

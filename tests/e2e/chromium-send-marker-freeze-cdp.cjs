@@ -115,6 +115,34 @@ function installPageHelpers() {
       element.dispatchEvent(new Event('change', { bubbles: true }));
     };
     const scopes = () => Array.from(document.querySelectorAll('.markerquiz'));
+    const contentHost = () => document.querySelector('main.lia-slide__content')
+      || document.querySelector('.lia-content')
+      || document.querySelector('main')
+      || document.querySelector('article')
+      || document.body;
+    const assignmentDetailMarkerForQuiz = quizRoot => {
+      const host = contentHost();
+      if (!host?.contains(quizRoot)) return null;
+      const markerSelector = '.lia-assignment-details[data-adetails]';
+      const excludedSelector = '#lia-freeze-bar,.lia-submit-box,#lia-print-slides';
+      const markers = Array.from(host.querySelectorAll(markerSelector))
+        .filter(marker => !marker.closest(excludedSelector));
+      return markers.find(marker => {
+        const localScope = marker.closest('.flex-child') || host;
+        const ordered = Array.from(localScope.querySelectorAll(
+          '.lia-quiz__check,' + markerSelector
+        ));
+        const markerIndex = ordered.indexOf(marker);
+        if (markerIndex < 0) return false;
+        for (let cursor = markerIndex - 1; cursor >= 0; cursor--) {
+          const candidate = ordered[cursor];
+          if (!candidate.matches('.lia-quiz__check')) continue;
+          if (candidate.closest(excludedSelector)) continue;
+          return candidate.closest('.lia-quiz') === quizRoot;
+        }
+        return false;
+      }) || null;
+    };
     const phase = () => document.body.classList.contains('lia-send-review')
       ? 'review'
       : document.body.classList.contains('lia-send-grading')
@@ -142,8 +170,33 @@ function installPageHelpers() {
       const scope = scopes()[index];
       const root = scope?.querySelector('.lia-quiz');
       if (!scope || !root) throw new Error('Marker #' + index + ' is missing');
+      const adetailsHost = assignmentDetailMarkerForQuiz(root);
+      const adetailsShadow = adetailsHost?.shadowRoot || null;
+      const sidecarRoots = adetailsShadow
+        ? Array.from(adetailsShadow.querySelectorAll(
+          '[data-lia-freeze-adetails-sidecar]'
+        ))
+        : [];
+      const sidecarRoot = sidecarRoots[0] || null;
+      const statuses = sidecarRoot
+        ? Array.from(sidecarRoot.querySelectorAll('.lia-send-status'))
+        : [];
+      const status = statuses[0] || null;
+      const control = root.querySelector('.lia-quiz__control');
+      const forbiddenSidecarSelector = [
+        '.lia-send-status',
+        '.lia-adetails-points',
+        '.lia-adetails-sidecar',
+        '.lia-adetails-feedback',
+        '[data-lia-send-logged]',
+        '[data-lia-freeze-adetails-sidecar]',
+      ].join(',');
       const proxy = scope.querySelector('.hlq-proxy');
-      const feedback = root.querySelector('.lia-quiz__feedback');
+      const sidecarFeedback = sidecarRoot?.querySelector('.lia-adetails-feedback');
+      const nativeFeedback = root.querySelector('.lia-quiz__feedback');
+      const feedback = sidecarFeedback?.textContent?.trim()
+        ? sidecarFeedback
+        : nativeFeedback;
       const resolve = root.querySelector('.lia-quiz__resolve');
       const internalSolve = proxy?.querySelector('[data-hlq-act="solve"]');
       const message = proxy?.querySelector('.hlq-msg');
@@ -167,6 +220,7 @@ function installPageHelpers() {
         frozen: document.body.classList.contains('lia-course-frozen'),
         shared: document.body.classList.contains('lia-shared-freeze-link'),
         scopeId,
+        adetails: adetailsHost?.getAttribute('data-adetails') || '',
         className,
         open: /\bopen\b/i.test(className),
         outcomeClass: /\b(?:solved|resolved|failed|success)\b/i.test(className),
@@ -174,8 +228,21 @@ function installPageHelpers() {
         correct: /\b(?:solved|success|correct|right answer)\b/i.test(
           className + ' ' + outcome + ' ' + feedbackClass + ' ' + feedbackText
         ),
-        sendLogged: root.getAttribute('data-lia-send-logged') === '1',
-        status: root.querySelector('.lia-send-status')?.textContent?.trim() || '',
+        sendLogged: sidecarRoot?.getAttribute('data-lia-send-logged') === '1',
+        status: status?.textContent?.trim() || '',
+        ownership: {
+          hostExists: !!adetailsHost,
+          hostOutsideQuiz: !!adetailsHost
+            && !adetailsHost.closest('.lia-quiz,.lia-quiz__control'),
+          hostLightDomEmpty: !!adetailsHost && adetailsHost.childNodes.length === 0,
+          sidecarRootCount: sidecarRoots.length,
+          statusCount: statuses.length,
+          quizHasSendLogged: root.hasAttribute('data-lia-send-logged'),
+          quizLightDomSidecars: root.querySelectorAll(forbiddenSidecarSelector).length,
+          controlLightDomSidecars: control
+            ? control.querySelectorAll(forbiddenSidecarSelector).length
+            : 0,
+        },
         proxyValue: proxy?.querySelector(
           'input.lia-quiz__input,textarea.lia-quiz__input,input[type=text],input[type=number]'
         )?.value?.trim() || '',
@@ -303,8 +370,7 @@ function installPageHelpers() {
         const root = scopes()[index].querySelector('.lia-quiz');
         root.querySelector('.lia-quiz__check').click();
         await waitFor('neutral status #' + index, () =>
-          root.querySelector('.lia-send-status')?.textContent
-            ?.startsWith('Antwort gespeichert')
+          read(index).status.startsWith('Antwort gespeichert')
         );
       }
       const collected = readBoth();
@@ -392,7 +458,24 @@ function installPageHelpers() {
   })();
 }
 
+function assertSidecarOwnership(item, label) {
+  const ownership = item.ownership || {};
+  assert(item.adetails && ownership.hostExists && ownership.hostOutsideQuiz,
+    label + ' has no external ADetails host: ' + JSON.stringify(item));
+  assert(ownership.hostLightDomEmpty
+      && ownership.sidecarRootCount === 1
+      && ownership.statusCount === 1,
+    label + ' does not have exactly one Shadow-DOM status sidecar: '
+      + JSON.stringify(item));
+  assert(!ownership.quizHasSendLogged
+      && ownership.quizLightDomSidecars === 0
+      && ownership.controlLightDomSidecars === 0,
+    label + ' leaked Send/ADetails state into Elm-owned quiz light DOM: '
+      + JSON.stringify(item));
+}
+
 function assertCollect(item, label) {
+  assertSidecarOwnership(item, label);
   assert(item.phase === 'collect' && item.open && item.sendLogged,
     label + ' is not neutrally logged/open: ' + JSON.stringify(item));
   assert(item.status.startsWith('Antwort gespeichert'),
@@ -407,6 +490,7 @@ function assertCollect(item, label) {
 }
 
 function assertReview(item, label, shared) {
+  assertSidecarOwnership(item, label);
   assert(item.phase === 'review' && item.frozen && item.shared === shared,
     label + ' is not the expected review: ' + JSON.stringify(item));
   assert(item.proxyValue === '1' && item.correct,
