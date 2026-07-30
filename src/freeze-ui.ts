@@ -971,6 +971,36 @@ function ensureAssignmentDetailBadge(checkBtn: HTMLButtonElement, ownerId: strin
   return badge;
 }
 
+function placeAssignmentDetailBadge(
+  checkBtn: HTMLButtonElement,
+  badge: HTMLSpanElement
+): void {
+  const control =
+    checkBtn.closest('.lia-quiz__control') ??
+    checkBtn.parentElement ??
+    checkBtn;
+
+  const last = <T extends Element>(items: NodeListOf<T>): T | null =>
+    items.length ? items[items.length - 1] : null;
+  const hints = last(control.querySelectorAll<HTMLElement>('.lia-quiz__hint'));
+  const resolve = last(control.querySelectorAll<HTMLElement>('.lia-quiz__resolve'));
+  const reset = Array.from(control.querySelectorAll<HTMLElement>('button,[role=button]'))
+    .filter(element => {
+      const label = normalizeSpace(
+        element.getAttribute('aria-label')
+        || element.getAttribute('title')
+        || element.textContent
+        || ''
+      );
+      return /^(?:reset|zurücksetzen)$/i.test(label);
+    })
+    .pop() ?? null;
+  const anchor = hints ?? resolve ?? reset;
+
+  if (anchor?.parentElement) anchor.insertAdjacentElement('afterend', badge);
+  else control.appendChild(badge);
+}
+
 function getAssignmentDetailTaskIndex(
   marker: Element,
   checkBtn: HTMLButtonElement,
@@ -1087,6 +1117,7 @@ export function refreshAssignmentDetails(): void {
 
       const ownerId = ensureAssignmentDetailOwnerId(marker);
       const badge = ensureAssignmentDetailBadge(checkBtn, ownerId);
+      placeAssignmentDetailBadge(checkBtn, badge);
 
       const control = checkBtn.closest(".lia-quiz__control") ?? checkBtn.parentElement;
       const quizRoot = checkBtn.closest(".lia-quiz");
