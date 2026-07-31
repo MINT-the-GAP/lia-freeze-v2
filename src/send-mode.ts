@@ -27,6 +27,7 @@ export interface DeferredSendContext {
   getRuntimeWindows(): Window[];
   getContentHost(targetDocument: Document): Element | null;
   setQuizStatus?(root: Element, contentHost: Element, text: string): void;
+  formatLoggedStatus?(checkCount: number): string;
   clearQuizStatuses?(targetDocument: Document): void;
   onLogged?(task: DeferredSendTask): void;
   onReviewResolve?(task: DeferredSendTask): void;
@@ -93,8 +94,9 @@ function ensureLoggedStatus(root: Element, checkCount: number): void {
   context.setQuizStatus?.(
     root,
     host,
-    "Antwort gespeichert. Prüfen-Klicks: " + checkCount
-      + ". Die Auswertung erfolgt nach der Abgabe."
+    context.formatLoggedStatus?.(checkCount)
+      ?? ("Antwort gespeichert. Prüfen-Klicks: " + checkCount
+        + ". Die Auswertung erfolgt nach der Abgabe.")
   );
 }
 

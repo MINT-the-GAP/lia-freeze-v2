@@ -1377,3 +1377,66 @@ test('rejects malformed fullscreen evidence without rendering attacker data', as
   });
   assert.doesNotMatch(html, /Fullscreen mode|img src|onerror|alert\(1\)/);
 });
+
+test('renders the complete evaluation surface in German when requested', async () => {
+  const { renderEvaluationSlide } = await evaluationPromise;
+  const html = renderEvaluationSlide({
+    language: 'de-DE',
+    title: 'Evaluation',
+    name: 'Ada',
+    slides: [{ h: '#1', t: 'Aufgabe' }],
+    payload: {
+      v: 2,
+      sh: '#1',
+      s: [{ h: '#1', quiz: { 0: [{ solved: 1 }] } }],
+      slideTimeMs: { '#1': 65_000 },
+      sendChecks: {
+        version: 1,
+        items: [{ hash: '#1', taskIndex: 0, count: 2 }],
+      },
+      sec: {
+        trackF12: 1,
+        trackTab: 1,
+        f12: 1,
+        tab: 1,
+        dt: {
+          v: 1,
+          b: 'chromium',
+          k: 1,
+          g: 1,
+          c: 1,
+          e: [['c', 10, 'C-S-I']],
+        },
+        fs: {
+          v: 1,
+          r: 3,
+          x: 0,
+          a: 0,
+          e: [],
+        },
+      },
+    },
+    evalDecl: {
+      '#1': {
+        tt: 1,
+        tb: 1,
+        tg: { Algebra: { total: 1, tasks: 1 } },
+        tl: [{ be: 1, tg: ['Algebra'], table: 'quiz' }],
+      },
+    },
+  });
+
+  assert.match(html, />Auswertung</);
+  assert.match(html, /Zusammenfassung der eingefrorenen Abgabe/);
+  assert.match(html, />Richtig</);
+  assert.match(html, />Falsch</);
+  assert.match(html, />Lösung angezeigt</);
+  assert.match(html, />Nicht bearbeitet</);
+  assert.match(html, /Auswertung nach Tags/);
+  assert.match(html, /Prüfen-Klicks pro Aufgabe/);
+  assert.match(html, /Zeit pro Folie/);
+  assert.match(html, /Browser-Signale mit möglichem DevTools-Bezug erkannt/);
+  assert.match(html, /Signale zu Tab-\/Fensterfokus oder Sichtbarkeit erkannt/);
+  assert.match(html, /Vollbildanforderung wurde nicht abgeschlossen/);
+  assert.doesNotMatch(html, /Summary of the frozen submission|Time per Slide|Not done/);
+});

@@ -177,6 +177,10 @@ export function parseEvaluationOptions(courseMarkdown: string): EvaluationOption
 
 const EVALUATION_TITLE = "Evaluation";
 
+function isGermanEvaluationLanguage(language: unknown): boolean {
+  return typeof language === "string" && /^de(?:[-_]|$)/i.test(language.trim());
+}
+
 export function parseDeclaredSlides(courseMarkdown: string): DeclaredSlide[] {
   const slides: DeclaredSlide[] = [];
   let hasEval = false;
@@ -938,10 +942,11 @@ function feedbackColor(kind: "correct" | "wrong" | "resolved" | "neutral"): stri
   return "var(--lia-course-fg)";
 }
 
-function formatPercent(part: number, total: number): string {
+function formatPercent(part: number, total: number, german = false): string {
   const p = total > 0 ? (part / total) * 100 : 0;
   const r = Math.round(p * 10) / 10;
-  return String(r).replace(".", ",");
+  const formatted = String(r);
+  return german ? formatted.replace(".", ",") : formatted;
 }
 
 function renderCard(label: string, value: string | number, kind: "correct" | "wrong" | "resolved" | "neutral"): string {
@@ -972,8 +977,8 @@ function renderTagMetricCard(label: string, value: string | number, kind: "corre
   ].join("");
 }
 
-function renderTagBlock(entry: TagStats): string {
-  const pct = formatPercent(entry.correct, entry.total);
+function renderTagBlock(entry: TagStats, german = false): string {
+  const pct = formatPercent(entry.correct, entry.total, german);
   return [
     '<div style="margin-top:1.2rem;padding:1rem 1.05rem;border-radius:14px;border:1px solid var(--lia-course-border);background:color-mix(in srgb, var(--lia-course-bg) 94%, black 6%);">',
       '<div style="font-weight:800;font-size:3.0rem;line-height:1.2;margin-bottom:.8rem;color:var(--lia-course-fg);">',
@@ -981,11 +986,15 @@ function renderTagBlock(entry: TagStats): string {
       '</div>',
       '<div style="overflow-x:auto;">',
         '<div style="display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:.75rem;min-width:820px;">',
-          renderTagMetricCard("Correct", entry.correct, "correct"),
-          renderTagMetricCard("Wrong", entry.wrong, "wrong"),
-          renderTagMetricCard("Resolved", entry.resolved, "resolved"),
-          renderTagMetricCard("Achieved", entry.correct + " of " + entry.total, "neutral"),
-          renderTagMetricCard("Score", pct + "%", "neutral"),
+          renderTagMetricCard(german ? "Richtig" : "Correct", entry.correct, "correct"),
+          renderTagMetricCard(german ? "Falsch" : "Wrong", entry.wrong, "wrong"),
+          renderTagMetricCard(german ? "Lösung angezeigt" : "Resolved", entry.resolved, "resolved"),
+          renderTagMetricCard(
+            german ? "Erreicht" : "Achieved",
+            entry.correct + (german ? " von " : " of ") + entry.total,
+            "neutral"
+          ),
+          renderTagMetricCard(german ? "Ergebnis" : "Score", pct + "%", "neutral"),
         '</div>',
       '</div>',
     '</div>',
@@ -1085,7 +1094,7 @@ function readFullscreenEvidence(value: unknown): RenderableFullscreenEvidence | 
   };
 }
 
-function renderDevtoolsWarning(sec: SnapshotPayload["sec"]): string {
+function renderDevtoolsWarning(sec: SnapshotPayload["sec"], german = false): string {
   if (!sec) return "";
   const trackF12 = (sec as unknown as { trackF12?: unknown }).trackF12;
   if (trackF12 !== 1 && trackF12 !== true) return "";
@@ -1099,9 +1108,14 @@ function renderDevtoolsWarning(sec: SnapshotPayload["sec"]): string {
         'border:1px solid ', color, ';',
         'background:color-mix(in srgb, ', color, ' 12%, var(--lia-course-bg) 88%);',
         'color:', color, ';">',
-        escapeHtml("Legacy F12/DevTools signal detected (" + legacyCount + "). "),
+        escapeHtml(
+          (german ? "Altes F12-/DevTools-Signal erkannt (" : "Legacy F12/DevTools signal detected (")
+            + legacyCount + "). "
+        ),
         '<span style="font-weight:600;font-size:1.45rem;">',
-          escapeHtml("Source details are unavailable; treat this as an unverified indicator, not proof."),
+          escapeHtml(german
+            ? "Quelldetails sind nicht verfügbar; dies ist ein ungeprüfter Hinweis und kein Beweis."
+            : "Source details are unavailable; treat this as an unverified indicator, not proof."),
         '</span>',
       '</div>',
     ].join("");
@@ -1111,26 +1125,39 @@ function renderDevtoolsWarning(sec: SnapshotPayload["sec"]): string {
   if (incidents <= 0) return "";
   const color = feedbackColor(evidence.combined > 0 ? "wrong" : "resolved");
   const browserLabels: Record<RenderableDevtoolsEvidence["browser"], string> = {
-    chromium: "Chromium (Chrome, Edge or Brave)",
+    chromium: german
+      ? "Chromium (Chrome, Edge oder Brave)"
+      : "Chromium (Chrome, Edge or Brave)",
     firefox: "Firefox",
     safari: "Safari",
-    other: "Other browser",
+    other: german ? "Anderer Browser" : "Other browser",
   };
-  const incidentLabel = incidents === 1 ? "signal incident" : "signal incidents";
+  const incidentLabel = german
+    ? (incidents === 1 ? "Signalereignis" : "Signalereignisse")
+    : (incidents === 1 ? "signal incident" : "signal incidents");
   return [
     '<div style="margin-top:.85rem;padding:1rem 1.05rem;border-radius:12px;',
       'border:1px solid ', color, ';',
       'background:color-mix(in srgb, ', color, ' 12%, var(--lia-course-bg) 88%);',
       'color:', color, ';">',
-      '<div style="font-weight:800;font-size:2.35rem;">DevTools-related browser signals detected</div>',
+      '<div style="font-weight:800;font-size:2.35rem;">',
+        german ? "Browser-Signale mit möglichem DevTools-Bezug erkannt" : "DevTools-related browser signals detected",
+      '</div>',
       '<div style="font-weight:700;font-size:1.55rem;margin-top:.35rem;">',
-        escapeHtml(incidents + " " + incidentLabel + ". Trusted shortcut candidates: "
-          + evidence.shortcuts + " · stable viewport anomalies: " + evidence.geometry
-          + " · combined signals: " + evidence.combined + "."),
+        escapeHtml(german
+          ? incidents + " " + incidentLabel + ". Vertrauenswürdige Tastenkürzel-Kandidaten: "
+            + evidence.shortcuts + " · stabile Ansichtsfenster-Abweichungen: " + evidence.geometry
+            + " · kombinierte Signale: " + evidence.combined + "."
+          : incidents + " " + incidentLabel + ". Trusted shortcut candidates: "
+            + evidence.shortcuts + " · stable viewport anomalies: " + evidence.geometry
+            + " · combined signals: " + evidence.combined + "."),
       '</div>',
       '<div style="font-weight:600;font-size:1.35rem;margin-top:.3rem;">',
-        escapeHtml("Browser family: " + browserLabels[evidence.browser] + ". "),
-        escapeHtml("These are technical indicators, not proof that DevTools were opened, and they do not change quiz points."),
+        escapeHtml((german ? "Browserfamilie: " : "Browser family: ")
+          + browserLabels[evidence.browser] + ". "),
+        escapeHtml(german
+          ? "Dies sind technische Hinweise, kein Beweis für geöffnete DevTools; die Aufgabenpunkte werden dadurch nicht verändert."
+          : "These are technical indicators, not proof that DevTools were opened, and they do not change quiz points."),
       '</div>',
     '</div>',
   ].join("");
@@ -1139,7 +1166,8 @@ function renderDevtoolsWarning(sec: SnapshotPayload["sec"]): string {
 function renderSendCheckSection(
   evidence: FrozenSendCheckCounts,
   evalDecl: EvaluationDeclarationMap,
-  slides?: DeclaredSlide[]
+  slides?: DeclaredSlide[],
+  german = false,
 ): string {
   const declaredKeys = new Set<string>();
   const rows: Array<{
@@ -1159,14 +1187,16 @@ function renderSendCheckSection(
       declaration.tl.forEach((task, taskIndex) => {
         const key = makeSendCheckTaskKey(hash, taskIndex);
         declaredKeys.add(key);
-        const tags = task.tg.length ? task.tg.join(", ") : "No tag";
+        const tags = task.tg.length ? task.tg.join(", ") : (german ? "Kein Tag" : "No tag");
         rows.push({
           key,
           hash,
           taskIndex,
           count: evidence.byTask[key] ?? 0,
           title: slideTitles.get(hash) ?? hash,
-          detail: tags + " · " + (task.table === "survey" ? "Survey (ungraded)" : "Quiz"),
+          detail: tags + " · " + (task.table === "survey"
+            ? (german ? "Umfrage (unbewertet)" : "Survey (ungraded)")
+            : (german ? "Aufgabe" : "Quiz")),
           table: task.table,
         });
       });
@@ -1183,7 +1213,7 @@ function renderSendCheckSection(
       taskIndex: item.taskIndex,
       count: item.count,
       title: slideTitles.get(item.hash) ?? item.hash,
-      detail: "No @ADetails declaration",
+      detail: german ? "Keine @ADetails-Angabe" : "No @ADetails declaration",
       table: "unknown",
     });
   });
@@ -1194,7 +1224,8 @@ function renderSendCheckSection(
       '" data-lia-send-check-table="', row.table,
       '" style="display:grid;grid-template-columns:minmax(220px,1.7fr) minmax(180px,1.4fr) minmax(70px,.35fr);gap:.75rem;',
       'align-items:center;padding:.55rem .7rem;border-top:1px solid var(--lia-course-border);">',
-      '<span><strong>', escapeHtml(row.title), '</strong> · Task ', String(row.taskIndex + 1), '</span>',
+      '<span><strong>', escapeHtml(row.title), '</strong> · ',
+        german ? "Aufgabe " : "Task ", String(row.taskIndex + 1), '</span>',
       '<span style="opacity:.86;">', escapeHtml(row.detail), '</span>',
       '<span style="font-weight:800;text-align:right;">', String(row.count), '</span>',
     '</div>',
@@ -1203,23 +1234,34 @@ function renderSendCheckSection(
   return [
     '<div data-lia-send-check-summary="1" data-lia-send-check-total="', String(evidence.total),
       '" style="margin-top:1.35rem;">',
-      '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.2rem;">Check clicks per task</div>',
-      '<div style="opacity:.82;margin-bottom:.8rem;">Only learner clicks on Check before submission are counted. ',
-        'Editing an answer and the automatic Freeze grading do not increase these values.</div>',
+      '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.2rem;">',
+        german ? "Prüfen-Klicks pro Aufgabe" : "Check clicks per task",
+      '</div>',
+      '<div style="opacity:.82;margin-bottom:.8rem;">',
+        german
+          ? "Gezählt werden nur Klicks der Lernenden auf „Prüfen“ vor der Abgabe. Das Bearbeiten einer Antwort und die automatische Freeze-Auswertung erhöhen diese Werte nicht."
+          : "Only learner clicks on Check before submission are counted. Editing an answer and the automatic Freeze grading do not increase these values.",
+      '</div>',
       '<div style="overflow-x:auto;border:1px solid var(--lia-course-border);border-radius:12px;">',
         '<div style="min-width:680px;">',
           '<div style="display:grid;grid-template-columns:minmax(220px,1.7fr) minmax(180px,1.4fr) minmax(70px,.35fr);',
             'gap:.75rem;padding:.55rem .7rem;font-weight:800;background:color-mix(in srgb, var(--lia-course-bg) 94%, black 6%);">',
-            '<span>Task</span><span>Tags / type</span><span style="text-align:right;">Checks</span>',
+            '<span>', german ? "Aufgabe" : "Task", '</span><span>',
+              german ? "Tags / Typ" : "Tags / type",
+            '</span><span style="text-align:right;">', german ? "Prüfen-Klicks" : "Checks", '</span>',
           '</div>',
-          renderedRows || '<div style="padding:.7rem;">No declared tasks.</div>',
+          renderedRows || (
+            '<div style="padding:.7rem;">'
+              + (german ? "Keine Aufgaben angegeben." : "No declared tasks.")
+              + '</div>'
+          ),
         '</div>',
       '</div>',
     '</div>',
   ].join("");
 }
 
-function renderTabWarning(count: number): string {
+function renderTabWarning(count: number, german = false): string {
   if (count <= 0) return "";
   const color = feedbackColor("wrong");
   return [
@@ -1228,18 +1270,24 @@ function renderTabWarning(count: number): string {
       'background:color-mix(in srgb, ', color, ' 12%, var(--lia-course-bg) 88%);',
       'color:', color, ';">',
       '<div style="font-weight:800;font-size:2.35rem;">',
-        escapeHtml("Tab/window focus or visibility signals detected"),
+        escapeHtml(german
+          ? "Signale zu Tab-/Fensterfokus oder Sichtbarkeit erkannt"
+          : "Tab/window focus or visibility signals detected"),
       '</div>',
       '<div style="font-weight:600;font-size:1.35rem;margin-top:.3rem;">',
-        escapeHtml(count + (count === 1 ? " signal was" : " signals were")
-          + " recorded. These are technical indicators, not proof of misconduct, and they do not change quiz points. "
-          + "Confirmed lia-mathpath @Explain transitions are excluded."),
+        escapeHtml(german
+          ? count + (count === 1 ? " Signal wurde" : " Signale wurden")
+            + " aufgezeichnet. Dies sind technische Hinweise, kein Beweis für Fehlverhalten; die Aufgabenpunkte werden dadurch nicht verändert. "
+            + "Bestätigte lia-mathpath-@Explain-Übergänge sind ausgenommen."
+          : count + (count === 1 ? " signal was" : " signals were")
+            + " recorded. These are technical indicators, not proof of misconduct, and they do not change quiz points. "
+            + "Confirmed lia-mathpath @Explain transitions are excluded."),
       '</div>',
     '</div>',
   ].join("");
 }
 
-function renderFullscreenWarning(sec: SnapshotPayload["sec"]): string {
+function renderFullscreenWarning(sec: SnapshotPayload["sec"], german = false): string {
   const evidence = readFullscreenEvidence(sec?.fs);
   if (!evidence) return "";
 
@@ -1248,34 +1296,62 @@ function renderFullscreenWarning(sec: SnapshotPayload["sec"]): string {
   let tone: "wrong" | "resolved" = "resolved";
   if (evidence.exits > 0) {
     tone = "wrong";
-    heading = evidence.exits === 1
-      ? "Fullscreen mode was left once during the exam"
-      : "Fullscreen mode was left " + evidence.exits + " times during the exam";
-    detail = "This records confirmed browser fullscreen transitions and does not change quiz points.";
+    heading = german
+      ? (evidence.exits === 1
+        ? "Der Vollbildmodus wurde während der Prüfung einmal verlassen"
+        : "Der Vollbildmodus wurde während der Prüfung " + evidence.exits + " Mal verlassen")
+      : (evidence.exits === 1
+        ? "Fullscreen mode was left once during the exam"
+        : "Fullscreen mode was left " + evidence.exits + " times during the exam");
+    detail = german
+      ? "Erfasst werden bestätigte Vollbildwechsel des Browsers; die Aufgabenpunkte werden dadurch nicht verändert."
+      : "This records confirmed browser fullscreen transitions and does not change quiz points.";
     if (evidence.allowedExplain > 0) {
-      detail += " " + evidence.allowedExplain
-        + " intended lia-mathpath @Explain transition"
-        + (evidence.allowedExplain === 1 ? " was" : "s were")
-        + " excluded and is not treated as a violation.";
+      detail += german
+        ? " " + evidence.allowedExplain
+          + (evidence.allowedExplain === 1
+            ? " beabsichtigter lia-mathpath-@Explain-Übergang wurde"
+            : " beabsichtigte lia-mathpath-@Explain-Übergänge wurden")
+          + " ausgenommen und nicht als Verstoß gewertet."
+        : " " + evidence.allowedExplain
+          + " intended lia-mathpath @Explain transition"
+          + (evidence.allowedExplain === 1 ? " was" : "s were")
+          + " excluded and is not treated as a violation.";
     }
   } else if (evidence.allowedExplain > 0) {
-    heading = "Intended @Explain transition excluded";
-    detail = evidence.allowedExplain
-      + " confirmed lia-mathpath @Explain transition"
-      + (evidence.allowedExplain === 1 ? " was" : "s were")
-      + " excluded and is not treated as a violation.";
+    heading = german
+      ? "Beabsichtigter @Explain-Übergang ausgenommen"
+      : "Intended @Explain transition excluded";
+    detail = german
+      ? evidence.allowedExplain
+        + (evidence.allowedExplain === 1
+          ? " bestätigter lia-mathpath-@Explain-Übergang wurde"
+          : " bestätigte lia-mathpath-@Explain-Übergänge wurden")
+        + " ausgenommen und nicht als Verstoß gewertet."
+      : evidence.allowedExplain
+        + " confirmed lia-mathpath @Explain transition"
+        + (evidence.allowedExplain === 1 ? " was" : "s were")
+        + " excluded and is not treated as a violation.";
   } else if (evidence.status === 0) {
-    heading = "Fullscreen mode was not requested";
-    detail = "The exam was not started through the fullscreen Start Exam action, so fullscreen exits could not be monitored.";
+    heading = german ? "Vollbildmodus wurde nicht angefordert" : "Fullscreen mode was not requested";
+    detail = german
+      ? "Die Prüfung wurde nicht über „Prüfung starten“ im Vollbildmodus begonnen; das Verlassen des Vollbildmodus konnte daher nicht überwacht werden."
+      : "The exam was not started through the fullscreen Start Exam action, so fullscreen exits could not be monitored.";
   } else if (evidence.status === 2) {
-    heading = "Fullscreen mode is unavailable";
-    detail = "This browser or embedding context did not provide an allowed fullscreen API. No fullscreen exit is inferred.";
+    heading = german ? "Vollbildmodus ist nicht verfügbar" : "Fullscreen mode is unavailable";
+    detail = german
+      ? "Dieser Browser oder Einbettungskontext stellte keine erlaubte Vollbild-API bereit. Daraus wird kein Verlassen des Vollbildmodus abgeleitet."
+      : "This browser or embedding context did not provide an allowed fullscreen API. No fullscreen exit is inferred.";
   } else if (evidence.status === 3) {
-    heading = "Fullscreen request was not completed";
-    detail = "The browser denied or could not complete the request. No fullscreen exit is inferred.";
+    heading = german ? "Vollbildanforderung wurde nicht abgeschlossen" : "Fullscreen request was not completed";
+    detail = german
+      ? "Der Browser lehnte die Anforderung ab oder konnte sie nicht abschließen. Daraus wird kein Verlassen des Vollbildmodus abgeleitet."
+      : "The browser denied or could not complete the request. No fullscreen exit is inferred.";
   } else if (evidence.status === 4) {
-    heading = "Fullscreen request was still pending";
-    detail = "The submission was frozen before the browser completed the request. No fullscreen exit is inferred.";
+    heading = german ? "Vollbildanforderung war noch ausstehend" : "Fullscreen request was still pending";
+    detail = german
+      ? "Die Abgabe wurde eingefroren, bevor der Browser die Anforderung abschloss. Daraus wird kein Verlassen des Vollbildmodus abgeleitet."
+      : "The submission was frozen before the browser completed the request. No fullscreen exit is inferred.";
   } else {
     return "";
   }
@@ -1303,36 +1379,45 @@ export interface RenderEvaluationOptions {
   title?: string;
   name?: string;
   slides?: DeclaredSlide[];
+  language?: string;
 }
 
 export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
   const { payload, evalDecl, title, name } = opts;
+  const german = isGermanEvaluationLanguage(opts.language);
 
   const stats = buildEvaluationStats(payload, evalDecl, opts.manualAwards);
   const tagStats = buildEvaluationStatsByTag(payload, evalDecl, opts.manualAwards);
   const sendCheckCounts = readFrozenSendCheckCounts(payload.sendChecks);
-  const pct = formatPercent(stats.correct, stats.total);
+  const pct = formatPercent(stats.correct, stats.total, german);
 
   const sec = payload.sec;
-  const f12Warning = renderDevtoolsWarning(sec);
-  const tabWarning = sec?.trackTab ? renderTabWarning(safeSecurityCount(sec.tab)) : "";
-  const fullscreenWarning = renderFullscreenWarning(sec);
+  const f12Warning = renderDevtoolsWarning(sec, german);
+  const tabWarning = sec?.trackTab
+    ? renderTabWarning(safeSecurityCount(sec.tab), german)
+    : "";
+  const fullscreenWarning = renderFullscreenWarning(sec, german);
 
   const subtitle = name
-    ? "Name: " + escapeHtml(name) + "<br>Summary of the frozen submission"
-    : "Summary of the frozen submission";
+    ? (german ? "Name: " : "Name: ") + escapeHtml(name) + "<br>"
+      + (german ? "Zusammenfassung der eingefrorenen Abgabe" : "Summary of the frozen submission")
+    : (german ? "Zusammenfassung der eingefrorenen Abgabe" : "Summary of the frozen submission");
 
   const tagSection = tagStats.length
     ? [
         '<div style="margin-top:1.35rem;">',
-          '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.2rem;">Evaluation by Tags</div>',
-          '<div style="opacity:.82;margin-bottom:.8rem;">Each tag shows its own partial result.</div>',
-          tagStats.map(renderTagBlock).join(""),
+          '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.2rem;">',
+            german ? "Auswertung nach Tags" : "Evaluation by Tags",
+          '</div>',
+          '<div style="opacity:.82;margin-bottom:.8rem;">',
+            german ? "Jeder Tag zeigt sein eigenes Teilergebnis." : "Each tag shows its own partial result.",
+          '</div>',
+          tagStats.map(entry => renderTagBlock(entry, german)).join(""),
         '</div>',
       ].join("")
     : "";
   const sendCheckSection = sendCheckCounts
-    ? renderSendCheckSection(sendCheckCounts, evalDecl, opts.slides)
+    ? renderSendCheckSection(sendCheckCounts, evalDecl, opts.slides, german)
     : "";
 
   const slideTimeSection = (() => {
@@ -1345,8 +1430,9 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
         const label = slide ? escapeHtml(slide.t) : escapeHtml(h);
         const totalSecs = Math.round(ms / 1000);
         const display = totalSecs < 60
-          ? totalSecs + " sec"
-          : Math.floor(totalSecs / 60) + " min " + (totalSecs % 60) + " sec";
+          ? totalSecs + (german ? " Sek." : " sec")
+          : Math.floor(totalSecs / 60) + (german ? " Min. " : " min ")
+            + (totalSecs % 60) + (german ? " Sek." : " sec");
         return '<div style="display:flex;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid var(--lia-course-border);">'
           + '<span>' + label + '</span>'
           + '<span style="font-weight:700;">' + escapeHtml(display) + '</span>'
@@ -1355,7 +1441,9 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
       .join("");
     return [
       '<div style="margin-top:1.35rem;">',
-        '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.4rem;">Time per Slide</div>',
+        '<div style="font-weight:800;font-size:2rem;line-height:1.2;margin-bottom:.4rem;">',
+          german ? "Zeit pro Folie" : "Time per Slide",
+        '</div>',
         '<div style="border:1px solid var(--lia-course-border);border-radius:12px;padding:.6rem 1rem;">',
           rows,
         '</div>',
@@ -1365,7 +1453,11 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
 
   return [
     '<div style="font-weight:800;font-size:4.35rem;line-height:1.2;margin-bottom:.6rem;">',
-      escapeHtml(title || EVALUATION_TITLE),
+      escapeHtml(
+        !title || title === EVALUATION_TITLE
+          ? (german ? "Auswertung" : EVALUATION_TITLE)
+          : title
+      ),
     '</div>',
 
     '<div style="margin-bottom:1rem;opacity:0.92;font-weight:700;">',
@@ -1373,21 +1465,29 @@ export function renderEvaluationSlide(opts: RenderEvaluationOptions): string {
     '</div>',
 
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.85rem;margin-bottom:1rem;">',
-      renderCard("Correct",   stats.correct,   "correct"),
-      renderCard("Wrong",     stats.wrong,     "wrong"),
-      renderCard("Resolved",  stats.resolved,  "resolved"),
-      renderCard("Not done",  stats.notMade,   "neutral"),
-      sendCheckCounts ? renderCard("Checks", sendCheckCounts.total, "neutral") : "",
+      renderCard(german ? "Richtig" : "Correct", stats.correct, "correct"),
+      renderCard(german ? "Falsch" : "Wrong", stats.wrong, "wrong"),
+      renderCard(german ? "Lösung angezeigt" : "Resolved", stats.resolved, "resolved"),
+      renderCard(german ? "Nicht bearbeitet" : "Not done", stats.notMade, "neutral"),
+      sendCheckCounts
+        ? renderCard(german ? "Prüfen-Klicks" : "Checks", sendCheckCounts.total, "neutral")
+        : "",
     '</div>',
 
     '<div style="font-weight:800;font-size:2.35rem;padding:1rem 1.05rem;border-radius:12px;border:1px solid var(--lia-course-border);background:var(--lia-course-bg);color:var(--lia-course-fg);">',
       escapeHtml(String(stats.correct)),
-      ' of ',
+      german ? ' von ' : ' of ',
       escapeHtml(String(stats.total)),
-      ' points achieved. <br>&nbsp;&nbsp;&nbsp; <strong><big><big><big><big>',
+      german
+        ? ' Punkten erreicht. <br>&nbsp;&nbsp;&nbsp; <strong><big><big><big><big>'
+        : ' points achieved. <br>&nbsp;&nbsp;&nbsp; <strong><big><big><big><big>',
       escapeHtml(pct),
       '%</big></big></big></big></strong>.<br>',
-      '<span style="opacity:.82;">Based on the quiz states stored in the freeze snapshot.</span>',
+      '<span style="opacity:.82;">',
+        german
+          ? "Grundlage sind die im Freeze-Snapshot gespeicherten Aufgabenstände."
+          : "Based on the quiz states stored in the freeze snapshot.",
+      '</span>',
     '</div>',
 
     f12Warning,

@@ -5,6 +5,7 @@
 export interface CourseDocumentIdentity {
   title: string;
   courseVersion: string;
+  language?: string;
 }
 
 export interface SubmissionDocumentMetadataV1 {
@@ -12,6 +13,7 @@ export interface SubmissionDocumentMetadataV1 {
   at: number;
   title?: string;
   courseVersion?: string;
+  language?: string;
 }
 
 export interface PrintableSubmissionHeaderModel {
@@ -32,6 +34,7 @@ export const PRINTABLE_VALUE_NOT_STORED = "Nicht im Freezelink gespeichert";
 
 const MAX_TITLE_LENGTH = 1_000;
 const MAX_VERSION_LENGTH = 300;
+const MAX_LANGUAGE_LENGTH = 35;
 const MAX_DATE_TIMESTAMP = 8_640_000_000_000_000;
 
 function normalizeSpace(value: string): string {
@@ -160,13 +163,15 @@ export function readSubmissionDocumentMetadata(
 
   const title = readOptionalText(raw, "title", MAX_TITLE_LENGTH);
   const courseVersion = readOptionalText(raw, "courseVersion", MAX_VERSION_LENGTH);
-  if (title === null || courseVersion === null) return null;
+  const language = readOptionalText(raw, "language", MAX_LANGUAGE_LENGTH);
+  if (title === null || courseVersion === null || language === null) return null;
 
   return {
     v: 1,
     at,
     ...(title ? { title } : {}),
     ...(courseVersion ? { courseVersion } : {}),
+    ...(language ? { language } : {}),
   };
 }
 
@@ -185,14 +190,24 @@ export function buildSubmissionDocumentMetadata(
       identity.courseVersion,
       MAX_VERSION_LENGTH,
     ),
+    language: normalizeAuthoredText(identity.language || "", MAX_LANGUAGE_LENGTH),
   });
   if (!metadata) throw new Error("Invalid submission document metadata.");
   return metadata;
 }
 
-function printableName(value: unknown): string {
-  if (typeof value !== "string") return PRINTABLE_VALUE_NOT_PROVIDED;
-  return normalizeSpace(value) || PRINTABLE_VALUE_NOT_PROVIDED;
+function printableFallback(
+  options: PrintableSubmissionHeaderOptions,
+  kind: "missing" | "legacy",
+): string {
+  const german = !options.locale || /^de(?:-|$)/i.test(options.locale);
+  if (kind === "missing") return german ? PRINTABLE_VALUE_NOT_PROVIDED : "Not provided";
+  return german ? PRINTABLE_VALUE_NOT_STORED : "Not stored in the Freeze link";
+}
+
+function printableName(value: unknown, options: PrintableSubmissionHeaderOptions): string {
+  if (typeof value !== "string") return printableFallback(options, "missing");
+  return normalizeSpace(value) || printableFallback(options, "missing");
 }
 
 function formatSubmissionDate(
@@ -218,14 +233,14 @@ export function buildPrintableSubmissionHeaderModel(
   options: PrintableSubmissionHeaderOptions = {},
 ): PrintableSubmissionHeaderModel {
   const metadata = readSubmissionDocumentMetadata(payload?.doc);
-  const name = printableName(payload?.n);
+  const name = printableName(payload?.n, options);
 
   if (!metadata) {
     return {
       name,
-      date: PRINTABLE_VALUE_NOT_STORED,
-      version: PRINTABLE_VALUE_NOT_STORED,
-      title: PRINTABLE_VALUE_NOT_STORED,
+      date: printableFallback(options, "legacy"),
+      version: printableFallback(options, "legacy"),
+      title: printableFallback(options, "legacy"),
       metadataStatus: "legacy",
     };
   }
@@ -233,8 +248,8 @@ export function buildPrintableSubmissionHeaderModel(
   return {
     name,
     date: formatSubmissionDate(metadata.at, options),
-    version: metadata.courseVersion || PRINTABLE_VALUE_NOT_PROVIDED,
-    title: metadata.title || PRINTABLE_VALUE_NOT_PROVIDED,
+    version: metadata.courseVersion || printableFallback(options, "missing"),
+    title: metadata.title || printableFallback(options, "missing"),
     metadataStatus: "frozen",
   };
 }

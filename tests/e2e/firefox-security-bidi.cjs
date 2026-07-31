@@ -97,16 +97,14 @@ socket.addEventListener('open', async () => {
 
     const link = await evaluate(context, `
       (() => {
-        const input = document.querySelector('input[placeholder="Enter your name"]');
+        const input = document.querySelector('#lia-name');
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         setter.call(input, 'Firefox E2E');
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        [...document.querySelectorAll('button')]
-          .find(button => button.innerText.trim() === 'Create Link')
-          .click();
+        document.querySelector('#lia-create-link').click();
         return new Promise(resolve => setTimeout(
-          () => resolve(document.querySelector('textarea').value),
+          () => resolve(document.querySelector('#lia-link').value),
           2200
         ));
       })()

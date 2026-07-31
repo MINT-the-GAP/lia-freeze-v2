@@ -75,6 +75,7 @@ test('builds and reads normalized, deterministic version-1 metadata', async () =
   const metadata = buildSubmissionDocumentMetadata({
     title: '  Kurs \n mit   Aufgaben ',
     courseVersion: ' 1.2.3   Proposal ',
+    language: ' de-DE ',
   }, createdAt);
 
   assert.deepEqual(metadata, {
@@ -82,6 +83,7 @@ test('builds and reads normalized, deterministic version-1 metadata', async () =
     at: createdAt,
     title: 'Kurs mit Aufgaben',
     courseVersion: '1.2.3 Proposal',
+    language: 'de-DE',
   });
   assert.deepEqual(readSubmissionDocumentMetadata({
     ...metadata,
@@ -112,6 +114,8 @@ test('rejects malformed metadata transactionally and accepts omitted optional fi
     { v: 1, at: validAt, title: 'x'.repeat(1_001) },
     { v: 1, at: validAt, courseVersion: {} },
     { v: 1, at: validAt, courseVersion: 'x'.repeat(301) },
+    { v: 1, at: validAt, language: {} },
+    { v: 1, at: validAt, language: 'x'.repeat(36) },
   ];
 
   for (const value of malformed) {
@@ -176,6 +180,34 @@ test('uses honest legacy and missing-value labels instead of current-course gues
   assert.equal(incomplete.version, PRINTABLE_VALUE_NOT_PROVIDED);
   assert.equal(incomplete.title, PRINTABLE_VALUE_NOT_PROVIDED);
   assert.equal(incomplete.metadataStatus, 'frozen');
+});
+
+test('uses English print-header fallbacks when the course locale is English', async () => {
+  const { buildPrintableSubmissionHeaderModel } = await documentPromise;
+  const validAt = Date.UTC(2026, 6, 26, 12, 34);
+
+  assert.deepEqual(
+    buildPrintableSubmissionHeaderModel({ n: '' }, { locale: 'en-US' }),
+    {
+      name: 'Not provided',
+      date: 'Not stored in the Freeze link',
+      version: 'Not stored in the Freeze link',
+      title: 'Not stored in the Freeze link',
+      metadataStatus: 'legacy',
+    }
+  );
+
+  const incomplete = buildPrintableSubmissionHeaderModel({
+    n: '',
+    doc: { v: 1, at: validAt },
+  }, {
+    locale: 'en-US',
+    timeZone: 'UTC',
+  });
+  assert.equal(incomplete.name, 'Not provided');
+  assert.equal(incomplete.version, 'Not provided');
+  assert.equal(incomplete.title, 'Not provided');
+  assert.match(incomplete.date, /2026/);
 });
 
 test('preserves document metadata through the existing token codec and old payloads', async () => {

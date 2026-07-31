@@ -1,6 +1,6 @@
 <!--
 author:   MINT-the-GAP, Martin Lommatzsch, Jihad Hyadi
-version:  1.0.1
+version:  1.0.0
 language: en
 narrator: US English Female
 edit: true
@@ -21,9 +21,9 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 
 @Abgabe
 <div class="lia-submit-box">
-  <h2>Create Submission Link</h2>
+  <h2 data-lia-freeze-i18n="submission-heading">Create Submission Link</h2>
 
-  <label for="lia-name">Name</label>
+  <label for="lia-name" data-lia-freeze-i18n="name-label">Name</label>
   <input id="lia-name" data-snapshot-admin="1" type="text" placeholder="Enter your name">
 
   <div class="lia-submit-actions">
@@ -32,6 +32,7 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
       data-snapshot-admin="1"
       type="button"
       onclick="window.__liaFreeze && window.__liaFreeze.createLink(); return false;"
+      data-lia-freeze-i18n="create-link"
     >Create Link</button>
 
     <button
@@ -40,6 +41,7 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
       type="button"
       disabled
       onclick="window.__liaFreeze && window.__liaFreeze.copyLink(); return false;"
+      data-lia-freeze-i18n="copy-link"
     >Copy Link</button>
 
     <button
@@ -47,12 +49,13 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
       data-snapshot-admin="1"
       type="button"
       title="Open the print dialog and choose Save as PDF"
+      data-lia-freeze-i18n="save-pdf"
       hidden
       disabled
     >Save course and evaluation as PDF</button>
   </div>
 
-  <label for="lia-link">Submission Link</label>
+  <label for="lia-link" data-lia-freeze-i18n="submission-link">Submission Link</label>
   <textarea id="lia-link" data-snapshot-admin="1" readonly placeholder="Your link will appear here"></textarea>
 
   <div id="lia-status"></div>
@@ -104,6 +107,12 @@ Add this import to the header of your LiaScript document:
 `import: https://raw.githubusercontent.com/MINT-the-GAP/lia-freeze-v2/main/README.md`
 
 Then use the macros in your course.
+
+The Freeze-owned interface follows the consuming course's leading
+`language:` metadata. German is enabled with `language: de` (or a regional
+variant such as `de-DE`); English is the fallback for other languages.
+The resolved language is stored in new Freeze links so shared and offline
+reviews keep the same labels and date formatting.
 
 
 ## Macros

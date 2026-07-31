@@ -75,6 +75,49 @@ const GENERIC_SIDECAR_HOST_ATTR = "data-lia-freeze-quiz-sidecars";
 const sidecars = new Map<HTMLElement, AssignmentDetailSidecar>();
 const observers = new WeakMap<Document, AssignmentDetailObserverState>();
 const genericPortals = new WeakMap<Document, GenericQuizSidecarPortal>();
+const genericPortalDocuments = new Set<Document>();
+let interfaceLanguage: "en" | "de" = "en";
+
+export function configureAssignmentDetailLanguage(language: string): void {
+  interfaceLanguage = /^de(?:[-_]|$)/i.test(String(language || "").trim()) ? "de" : "en";
+
+  sidecars.forEach(state => {
+    const maximum = state.badge
+      .querySelector<HTMLElement>(".lia-adetails-award-total")
+      ?.textContent;
+    if (state.awardInput && maximum) {
+      state.awardInput.setAttribute(
+        "aria-label",
+        (interfaceLanguage === "de" ? "Vergebene Punkte (maximal " : "Awarded points (maximum ")
+          + maximum + ")"
+      );
+    }
+  });
+
+  Array.from(genericPortalDocuments).forEach(targetDocument => {
+    const portal = genericPortals.get(targetDocument);
+    if (!portal?.host.isConnected) {
+      genericPortalDocuments.delete(targetDocument);
+      return;
+    }
+    portal.host.setAttribute(
+      "aria-label",
+      interfaceLanguage === "de" ? "Aufgabenstatus" : "Quiz status"
+    );
+    portal.entries.forEach(state => {
+      const label = state.entry.querySelector<HTMLElement>(
+        ".lia-freeze-generic-sidecar-label"
+      );
+      if (!label) return;
+      const taskIndex = Number(
+        state.entry.getAttribute("data-lia-freeze-task-index")
+      );
+      label.textContent = Number.isInteger(taskIndex) && taskIndex > 0
+        ? (interfaceLanguage === "de" ? "Aufgabe " : "Task ") + taskIndex
+        : (interfaceLanguage === "de" ? "Aufgabe" : "Quiz");
+    });
+  });
+}
 
 function normalizeSpace(value: string): string {
   return String(value || "").trim().replace(/\s+/g, " ");
@@ -381,7 +424,7 @@ function ensureGenericPortal(
   if (!body) return null;
   const host = targetDocument.createElement("lia-freeze-quiz-sidecars");
   host.setAttribute(GENERIC_SIDECAR_HOST_ATTR, "1");
-  host.setAttribute("aria-label", "Quiz status");
+  host.setAttribute("aria-label", interfaceLanguage === "de" ? "Aufgabenstatus" : "Quiz status");
 
   let shadow: ShadowRoot;
   try {
@@ -431,6 +474,7 @@ function ensureGenericPortal(
     entries: new Map(),
   };
   genericPortals.set(targetDocument, portal);
+  genericPortalDocuments.add(targetDocument);
   return portal;
 }
 
@@ -442,7 +486,9 @@ function removeGenericEntry(
   portal.entries.delete(state.quizRoot);
   if (portal.entries.size) return;
   portal.host.remove();
-  genericPortals.delete(portal.host.ownerDocument);
+  const targetDocument = portal.host.ownerDocument;
+  genericPortals.delete(targetDocument);
+  genericPortalDocuments.delete(targetDocument);
 }
 
 function cleanupGenericEntry(
@@ -474,7 +520,9 @@ function ensureGenericEntry(
 
   const label = quizRoot.ownerDocument.createElement("span");
   label.className = "lia-freeze-generic-sidecar-label";
-  label.textContent = taskIndex >= 0 ? "Task " + (taskIndex + 1) : "Quiz";
+  label.textContent = taskIndex >= 0
+    ? (interfaceLanguage === "de" ? "Aufgabe " : "Task ") + (taskIndex + 1)
+    : (interfaceLanguage === "de" ? "Aufgabe" : "Quiz");
   const status = quizRoot.ownerDocument.createElement("div");
   status.className = "lia-send-status";
   status.setAttribute("role", "status");
@@ -567,6 +615,7 @@ function disposeGenericPortal(targetDocument: Document): void {
   portal.entries.clear();
   portal.host.remove();
   genericPortals.delete(targetDocument);
+  genericPortalDocuments.delete(targetDocument);
 }
 
 export function assignmentDetailAwardKey(hash: string, taskIndex: number): string {
@@ -666,7 +715,11 @@ function renderBadge(
 
   const total = state.badge.querySelector<HTMLElement>(".lia-adetails-award-total");
   if (total) total.textContent = spec.badge;
-  input.setAttribute("aria-label", "Awarded points (maximum " + spec.badge + ")");
+  input.setAttribute(
+    "aria-label",
+    (interfaceLanguage === "de" ? "Vergebene Punkte (maximal " : "Awarded points (maximum ")
+      + spec.badge + ")"
+  );
   const manualValue = award.getValue(key);
   const inputIsActive = state.marker.ownerDocument.activeElement === input
     || state.shadow.activeElement === input;

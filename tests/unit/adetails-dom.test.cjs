@@ -311,6 +311,49 @@ test('shared-link award input stays editable and refresh does not duplicate list
   assert.equal(changes, 3);
 });
 
+test('localizes Freeze-owned ADetails labels without changing the English default', async () => {
+  const {
+    configureAssignmentDetailLanguage,
+    refreshAssignmentDetailSidecars,
+    setAssignmentDetailSendStatus,
+  } = await adetailsDomPromise;
+
+  configureAssignmentDetailLanguage('de-DE');
+  try {
+    const awardFixture = fixture(`
+      ${quizMarkup('quiz-de')}
+      <span class='lia-assignment-details' data-adetails='5'></span>
+    `, 'lia-shared-freeze-link');
+    const award = {
+      getHash: () => '#1',
+      getDefaultAward: () => 5,
+      getValue: () => undefined,
+      setValue() {},
+      onChange() {},
+    };
+    refreshAssignmentDetailSidecars(awardFixture.host, { award });
+    const marker = awardFixture.host.querySelector('[data-adetails]');
+    assert.equal(
+      marker.shadowRoot.querySelector('.lia-adetails-award-input').getAttribute('aria-label'),
+      'Vergebene Punkte (maximal 5 BE)'
+    );
+
+    const genericFixture = fixture(quizMarkup('generic-de'));
+    const quiz = genericFixture.host.querySelector('#generic-de');
+    setAssignmentDetailSendStatus(quiz, genericFixture.host, 'Gespeichert');
+    const portal = genericFixture.document.body.querySelector(
+      '[data-lia-freeze-quiz-sidecars]'
+    );
+    assert.equal(portal.getAttribute('aria-label'), 'Aufgabenstatus');
+    assert.equal(
+      portal.shadowRoot.querySelector('.lia-freeze-generic-sidecar-label').textContent,
+      'Aufgabe 1'
+    );
+  } finally {
+    configureAssignmentDetailLanguage('en');
+  }
+});
+
 test('cleans detached sidecars and remounts one fresh shadow root child', async () => {
   const {
     disconnectAssignmentDetailObserver,

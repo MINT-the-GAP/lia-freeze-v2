@@ -10,6 +10,10 @@ import {
   observeAssignmentDetailSidecars,
   refreshAssignmentDetailSidecars,
 } from './adetails-dom';
+import {
+  freezeText,
+  localizeSubmissionUi,
+} from "./i18n";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +39,22 @@ export type AssignmentDetailAwardContext = {
   getDefaultAward(hash: string, taskIndex: number, maximum: number): number;
   onChange(): void;
 };
+
+export function refreshLocalizedUi(root: ParentNode = document): void {
+  localizeSubmissionUi(root);
+  const translatedAttributes: Array<[string, string, string]> = [
+    ["#lia-freeze-first", "aria-label", freezeText("firstSlide")],
+    ["#lia-freeze-prev", "aria-label", freezeText("previousSlide")],
+    ["#lia-freeze-next", "aria-label", freezeText("nextSlide")],
+    ["#lia-freeze-last", "aria-label", freezeText("evaluationSlide")],
+    ["#lia-freeze-print", "aria-label", freezeText("printEvaluation")],
+    ["#lia-freeze-print", "title", freezeText("printEvaluationTitle")],
+  ];
+  translatedAttributes.forEach(([selector, name, value]) => {
+    const element = root.querySelector(selector);
+    if (element?.getAttribute(name) !== value) element?.setAttribute(name, value);
+  });
+}
 
 let assignmentDetailAwardContext: AssignmentDetailAwardContext | null = null;
 let manualAwardValues: Record<string, string> = Object.create(null);
@@ -642,7 +662,7 @@ export function setPrintReportHeader(data: PrintReportHeaderData): void {
 
   const kicker = document.createElement("div");
   kicker.className = "lia-print-report-kicker";
-  kicker.textContent = "Eingefrorene Abgabe";
+  kicker.textContent = freezeText("frozenSubmissionReport");
 
   const title = document.createElement("h1");
   title.className = "lia-print-report-title";
@@ -664,9 +684,9 @@ export function setPrintReportHeader(data: PrintReportHeaderData): void {
     meta.appendChild(field);
   };
 
-  appendField("Schülername", data.studentName);
-  appendField("Abgabedatum", data.submissionDate);
-  appendField("Kursversion", data.courseVersion);
+  appendField(freezeText("studentName"), data.studentName);
+  appendField(freezeText("submissionDate"), data.submissionDate);
+  appendField(freezeText("courseVersion"), data.courseVersion);
   header.append(kicker, title, meta);
 }
 
@@ -696,13 +716,13 @@ export function installFreezeBar(callbacks: NavCallbacks): void {
   bar.innerHTML = [
     '<div id="lia-freeze-bar-inner">',
       '<div id="lia-freeze-nav-left" class="lia-freeze-nav-group">',
-        '<button id="lia-freeze-first" type="button" aria-label="First slide">',
+        '<button id="lia-freeze-first" type="button" aria-label="' + freezeText("firstSlide") + '">',
           '<svg viewBox="-4 0 24 24" aria-hidden="true" class="lia-freeze-icon">',
             '<path d="M21 8H10.2V4L2 12l8.2 8v-4H21V8z" fill="currentColor"/>',
             '<rect x="-1.8" y="4" width="2.6" height="16" rx="1.3" fill="currentColor"/>',
           '</svg>',
         '</button>',
-        '<button id="lia-freeze-prev" type="button" aria-label="Previous slide">',
+        '<button id="lia-freeze-prev" type="button" aria-label="' + freezeText("previousSlide") + '">',
           '<svg viewBox="-4 0 24 24" aria-hidden="true" class="lia-freeze-icon">',
             '<path d="M21 8H10.2V4L2 12l8.2 8v-4H21V8z" fill="currentColor"/>',
             '<rect x="10.2" y="10.6" width="10.8" height="2.8" rx="1.4" fill="currentColor"/>',
@@ -713,19 +733,20 @@ export function installFreezeBar(callbacks: NavCallbacks): void {
         '<div id="lia-freeze-head"></div>',
       '</div>',
       '<div id="lia-freeze-nav-right" class="lia-freeze-nav-group">',
-        '<button id="lia-freeze-next" type="button" aria-label="Next slide">',
+        '<button id="lia-freeze-next" type="button" aria-label="' + freezeText("nextSlide") + '">',
           '<svg viewBox="-4 0 24 24" aria-hidden="true" class="lia-freeze-icon" style="transform:scaleX(-1)">',
             '<path d="M21 8H10.2V4L2 12l8.2 8v-4H21V8z" fill="currentColor"/>',
             '<rect x="10.2" y="10.6" width="10.8" height="2.8" rx="1.4" fill="currentColor"/>',
           '</svg>',
         '</button>',
-        '<button id="lia-freeze-last" type="button" aria-label="Go to evaluation slide">',
+        '<button id="lia-freeze-last" type="button" aria-label="' + freezeText("evaluationSlide") + '">',
           '<svg viewBox="-4 0 24 24" aria-hidden="true" class="lia-freeze-icon" style="transform:scaleX(-1)">',
             '<path d="M21 8H10.2V4L2 12l8.2 8v-4H21V8z" fill="currentColor"/>',
             '<rect x="-1.8" y="4" width="2.6" height="16" rx="1.3" fill="currentColor"/>',
           '</svg>',
         '</button>',
-        '<button id="lia-freeze-print" type="button" aria-label="Print evaluation or save as PDF" title="Print evaluation / save as PDF" disabled>',
+        '<button id="lia-freeze-print" type="button" aria-label="' + freezeText("printEvaluation") +
+          '" title="' + freezeText("printEvaluationTitle") + '" disabled>',
           '<svg viewBox="0 0 24 24" aria-hidden="true" class="lia-freeze-icon">',
             '<path d="M6 9V3h12v6h1a3 3 0 0 1 3 3v6h-4v3H6v-3H2v-6a3 3 0 0 1 3-3h1zm2-4v4h8V5H8zm8 10H8v4h8v-4zm3-2a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" fill="currentColor"/>',
           '</svg>',
@@ -735,6 +756,7 @@ export function installFreezeBar(callbacks: NavCallbacks): void {
   ].join("");
 
   document.body.appendChild(bar);
+  refreshLocalizedUi(document);
 
   function wire(id: string, handler: () => void): void {
     const btn = bar.querySelector<HTMLButtonElement>("#" + id);
@@ -1774,12 +1796,10 @@ function getOrCreateLivePrintButton(): HTMLButtonElement | null {
   button.type = "button";
   button.hidden = true;
   button.disabled = true;
-  button.textContent = 'Save course and evaluation as PDF';
-  button.textContent = "Save evaluation as PDF";
-  button.title = "Open the print dialog and choose Save as PDF";
+  button.textContent = freezeText("savePdf");
+  button.title = freezeText("savePdfTitle");
   button.setAttribute("data-snapshot-admin", "1");
   actions.appendChild(button);
-  button.textContent = 'Save course and evaluation as PDF';
   return button;
 }
 
@@ -1792,7 +1812,11 @@ export function setLiveBarFrozen(linkUrl: string, name: string): void {
   const noteEl = document.getElementById("lia-frozen-note");
 
   if (nameEl) { nameEl.value = name; nameEl.disabled = true; }
-  if (btnEl)  { btnEl.disabled = true; btnEl.textContent = "Submission frozen"; }
+  if (btnEl)  {
+    btnEl.disabled = true;
+    btnEl.setAttribute("data-lia-freeze-state", "frozen");
+    btnEl.textContent = freezeText("submissionFrozen");
+  }
 
   if (linkEl) {
     linkEl.value = linkUrl;
@@ -1808,14 +1832,12 @@ export function setLiveBarFrozen(linkUrl: string, name: string): void {
     printBtn.disabled = !linkUrl;
   }
 
-  setLiveBarStatus("Submission link created.");
+  setLiveBarStatus(freezeText("submissionLinkCreated"));
 
   if (noteEl) {
     noteEl.style.display = "block";
-    noteEl.innerHTML =
-      "This is a <strong>frozen submission</strong>. Tasks and inputs are locked. " +
-      "The table of contents, display mode, and layout can still be used. " +
-      "The PDF button opens the browser print dialog.";
+    noteEl.setAttribute("data-lia-freeze-state", "frozen");
+    noteEl.innerHTML = freezeText("frozenNoteHtml");
   }
 }
 

@@ -10,6 +10,7 @@ import {
 } from './send-mode';
 import {
   clearAssignmentDetailSendStatuses,
+  configureAssignmentDetailLanguage,
   materializeAssignmentDetailSidecarsForPrint,
   setAssignmentDetailFeedback,
   setAssignmentDetailSendStatus,
@@ -43,6 +44,7 @@ import {
   applyThemeColors,
   applyCourseColors,
   refreshAssignmentDetails,
+  refreshLocalizedUi,
   configureAssignmentDetailAwards,
   getManualAwardValues,
   installFreezeBar,
@@ -81,6 +83,7 @@ import {
   buildPrintableSubmissionHeaderModel,
   buildSubmissionDocumentMetadata,
   parseCourseDocumentIdentity,
+  readSubmissionDocumentMetadata,
 } from "./submission-document";
 import type { CourseDocumentIdentity } from "./submission-document";
 import {
@@ -104,6 +107,14 @@ import {
   type NativeDomFallbackV1,
 } from "./native-dom";
 import { sameOriginRuntimeWindows } from "./runtime-windows";
+import {
+  detectDocumentLanguage,
+  freezeText,
+  localeForLanguage,
+  parseCourseLanguage,
+  setFreezeLanguage,
+  type FreezeLanguage,
+} from "./i18n";
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -121,6 +132,7 @@ let courseDocumentIdentity: CourseDocumentIdentity = {
   title: "",
   courseVersion: "",
 };
+let courseLanguage: FreezeLanguage = "en";
 
 let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
@@ -151,10 +163,45 @@ const canvasProgressRuntimeWindows = new WeakSet<Window>();
 const annotationProgressRuntimeWindows = new WeakSet<Window>();
 const coordinateProgressRuntimeWindows = new WeakSet<Window>();
 const runtimeMutationObserverDocuments = new WeakSet<Document>();
+const localizedUiObserverDocuments = new WeakSet<Document>();
 const COORDINATE_REFRESH_DELAYS = [80, 300, 800, 1600, 3200, 6000] as const;
 const CANVAS_REFRESH_DELAYS = [40, 120, 360, 800, 1600, 3200, 6000] as const;
 const CANVAS_CAPTURE_COOLDOWN_MS = 180;
 const ANNOTATION_REFRESH_DELAYS = [40, 120, 360, 800, 1600, 3200, 6000] as const;
+
+function refreshLocalizedRuntimeUi(): void {
+  for (const runtime of sameOriginRuntimeWindows()) {
+    try {
+      const runtimeDocument = runtime.document;
+      refreshLocalizedUi(runtimeDocument);
+      if (runtimeDocument.body && !localizedUiObserverDocuments.has(runtimeDocument)) {
+        const Observer = runtimeDocument.defaultView?.MutationObserver ?? MutationObserver;
+        const observer = new Observer(refreshLocalizedRuntimeUi);
+        observer.observe(runtimeDocument.body, { childList: true, subtree: true });
+        localizedUiObserverDocuments.add(runtimeDocument);
+      }
+    } catch { /* a same-origin runtime may disappear during navigation */ }
+  }
+}
+
+function applyCourseLanguage(language: FreezeLanguage): void {
+  courseLanguage = setFreezeLanguage(language);
+  configureAssignmentDetailLanguage(courseLanguage);
+  refreshLocalizedRuntimeUi();
+  refreshAssignmentDetails();
+  [0, 80, 300].forEach(delay => window.setTimeout(refreshLocalizedRuntimeUi, delay));
+}
+
+function detectRenderedCourseLanguage(): FreezeLanguage {
+  for (const runtime of sameOriginRuntimeWindows()) {
+    try {
+      if (getContentHostForDocument(runtime.document)) {
+        return detectDocumentLanguage(runtime.document);
+      }
+    } catch { /* continue with the outer document */ }
+  }
+  return detectDocumentLanguage(document);
+}
 
 function eventElement(event: Event): Element | null {
   const target = event.target as Node | null;
@@ -510,7 +557,7 @@ function tickExamTimer(): void {
   const mm = String(Math.floor(totalSecs / 60)).padStart(2, "0");
   const ss = String(totalSecs % 60).padStart(2, "0");
   const el = getOrCreateCountdown();
-  el.textContent = "Time left: " + mm + ":" + ss;
+  el.textContent = freezeText("timeLeft", { time: mm + ":" + ss });
   el.style.display = "block";
   updateCountdownLayout();
 
@@ -668,12 +715,15 @@ function renderExamIntroCard(): HTMLElement {
 
   const dur = String(examConfig.durationMinutes);
   wrap.innerHTML =
-    '<h1 style="font-size:8rem;font-weight:900;line-height:1.05;margin:0 0 .9rem 0;color:#c1121f;">Exam</h1>' +
-    '<p style="font-size:4.25rem;line-height:1.45;font-weight:700;margin:0;">Clicking "Start Exam" begins the working time of <strong><span style="color:#c1121f;">' +
-    dur + ' minutes</span></strong> and switches the course to fullscreen mode.</p>' +
+    '<h1 style="font-size:8rem;font-weight:900;line-height:1.05;margin:0 0 .9rem 0;color:#c1121f;">' +
+      freezeText("exam") + '</h1>' +
+    '<p style="font-size:4.25rem;line-height:1.45;font-weight:700;margin:0;">' +
+      freezeText("examIntro", { duration: dur }) + '</p>' +
     '<div style="margin-top:1.3rem;">' +
-      '<label style="display:block;font-size:4.25rem;font-weight:700;margin:0 0 .4rem 0;">Name</label>' +
-      '<input class="lia-exam-name-input" type="text" placeholder="Enter your name" value="' +
+      '<label style="display:block;font-size:4.25rem;font-weight:700;margin:0 0 .4rem 0;">' +
+        freezeText("nameLabel") + '</label>' +
+      '<input class="lia-exam-name-input" type="text" placeholder="' +
+      freezeText("namePlaceholder").replace(/"/g, "&quot;") + '" value="' +
       initialName.replace(/"/g, "&quot;") +
       '" style="width:100%;box-sizing:border-box;padding:.6rem .75rem;border-radius:10px;' +
       'border:1px solid color-mix(in srgb,#c1121f 35%,var(--lia-course-border) 65%);' +
@@ -681,7 +731,8 @@ function renderExamIntroCard(): HTMLElement {
     '</div>' +
     '<button class="lia-exam-start-btn" type="button" style="margin-top:1.3rem;padding:.7rem 1.4rem;' +
       'border-radius:10px;border:2px solid #c1121f;background:#c1121f;color:#fff;' +
-      'font-size:4rem;font-weight:800;cursor:pointer;">Start Exam</button>';
+      'font-size:4rem;font-weight:800;cursor:pointer;">' +
+      freezeText("startExam") + '</button>';
 
   const input = wrap.querySelector<HTMLInputElement>(".lia-exam-name-input");
   if (input) {
@@ -839,6 +890,8 @@ async function loadCourseDeclarations(): Promise<void> {
   const md = await fetchCourseMarkdown();
   if (!md) return;
   courseMarkdownLoaded = true;
+  const authoredLanguage = parseCourseLanguage(md);
+  if (authoredLanguage) applyCourseLanguage(authoredLanguage);
   courseDocumentIdentity = parseCourseDocumentIdentity(md);
   evalOptions    = parseEvaluationOptions(md);
   declaredSlides = parseDeclaredSlides(md);
@@ -889,8 +942,11 @@ function showEvalPlaceholder(): void {
     title: evalSlide?.t,
     name: activePayload.n,
     slides: declaredSlides,
+    language: courseLanguage,
   });
-  const printHeader = buildPrintableSubmissionHeaderModel(activePayload);
+  const printHeader = buildPrintableSubmissionHeaderModel(activePayload, {
+    locale: localeForLanguage(courseLanguage),
+  });
   setPrintReportHeader({
     courseTitle: printHeader.title,
     studentName: printHeader.name,
@@ -984,6 +1040,7 @@ function applyFrozenAbgabeValues(): void {
 
 function installAbgabeRestoreObserver(): void {
   const obs = new MutationObserver(() => {
+    refreshLocalizedRuntimeUi();
     if (!frozenLink) return;
     const linkEl = document.getElementById("lia-link") as HTMLInputElement | null;
     if (linkEl && !linkEl.value) {
@@ -991,6 +1048,7 @@ function installAbgabeRestoreObserver(): void {
     }
   });
   obs.observe(document.body, { childList: true, subtree: true });
+  refreshLocalizedRuntimeUi();
 }
 
 // ── Hash change listener ──────────────────────────────────────────────────────
@@ -1047,6 +1105,7 @@ function onHashChange(): void {
   // Slide DOM is replaced on navigation — wait for render before re-locking.
   setTimeout(reapplyContentLock, 80);
   setTimeout(refreshAssignmentDetails, 80);
+  [0, 80, 300].forEach(delay => window.setTimeout(refreshLocalizedRuntimeUi, delay));
   setTimeout(refreshMarkerRender, 80);
   setTimeout(refreshMarkerRender, 300);
   scheduleCoordinateRefresh();
@@ -1063,6 +1122,11 @@ function onHashChange(): void {
 
 async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
   activePayload = payload;
+  const frozenDocument = readSubmissionDocumentMetadata(payload.doc);
+  const frozenLanguage: FreezeLanguage | null = frozenDocument?.language
+    ? (/^de(?:[-_]|$)/i.test(frozenDocument.language) ? "de" : "en")
+    : null;
+  if (frozenLanguage) applyCourseLanguage(frozenLanguage);
   const embeddedEvaluation = readFrozenEvaluationMetadata(payload.ev);
   const applyEmbeddedEvaluation = (): void => {
     if (!embeddedEvaluation) return;
@@ -1084,6 +1148,7 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
   // Legacy links without embedded metadata still need the source declarations
   // before their evaluation/navigation model can be built.
   if (!embeddedEvaluation) await courseDeclarationsPromise;
+  if (frozenLanguage) applyCourseLanguage(frozenLanguage);
 
   function navSlide(delta: number): void {
     hideEvalPlaceholder();
@@ -1144,6 +1209,7 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
     // Respect any slide the reviewer selected while that fetch was pending.
     await courseDeclarationsPromise;
     applyEmbeddedEvaluation();
+    if (frozenLanguage) applyCourseLanguage(frozenLanguage);
     setDeferredSendPhase(evalOptions.deferFeedback ? 'review' : 'off');
     refreshDeferredSendMode();
     const currentHash = getCurrentHash() || targetHash;
@@ -1176,7 +1242,7 @@ async function bootLiveMode(): Promise<void> {
       const url = linkEl?.value ?? "";
       if (!url) return;
       void copyLinkToClipboard(url).then(ok =>
-        setLiveBarStatus(ok ? "Link copied to clipboard." : "Copy failed — please copy manually.")
+        setLiveBarStatus(ok ? freezeText("linkCopied") : freezeText("copyFailed"))
       );
     },
   });
@@ -1194,6 +1260,7 @@ async function bootLiveMode(): Promise<void> {
     }
     setTimeout(reapplyContentLock, 80);
     setTimeout(refreshAssignmentDetails, 80);
+    [0, 80, 300].forEach(delay => window.setTimeout(refreshLocalizedRuntimeUi, delay));
     setTimeout(refreshMarkerRender, 80);
     setTimeout(refreshMarkerRender, 300);
     scheduleCoordinateRefresh();
@@ -1269,7 +1336,7 @@ function setSendGradingOverlay(visible: boolean): void {
   overlay.id = 'lia-send-grading-overlay';
   overlay.setAttribute('role', 'status');
   overlay.setAttribute('aria-live', 'assertive');
-  overlay.textContent = 'Abgabe wird eingefroren und anschließend ausgewertet …';
+  overlay.textContent = freezeText("sendGrading");
   overlay.style.cssText = [
     'position:fixed',
     'inset:0',
@@ -1727,9 +1794,10 @@ async function doCreateLink(): Promise<void> {
   const createButton = document.getElementById("lia-create-link") as HTMLButtonElement | null;
   if (createButton) {
     createButton.disabled = true;
-    createButton.textContent = "Creating link…";
+    createButton.setAttribute("data-lia-freeze-state", "creating");
+    createButton.textContent = freezeText("creatingLink");
   }
-  setLiveBarStatus("Creating submission link…");
+  setLiveBarStatus(freezeText("creatingSubmissionLink"));
   try {
     stopCurrentSlideTimer();
     // Copy learner Check counts before any technical grading action. The
@@ -1785,6 +1853,7 @@ async function doCreateLink(): Promise<void> {
         || declaredSlides.find(slide => !slide.vt)?.t
         || "",
       courseVersion: courseDocumentIdentity.courseVersion,
+      language: courseLanguage,
     });
 
     // Stop exam countdown once submission is successfully created
@@ -1806,17 +1875,19 @@ async function doCreateLink(): Promise<void> {
     if (canvasSlide?.canvas) activateCanvasSnapshot(canvasSlide.canvas);
     activateAnnotationSnapshot(snapshot.annot);
   } catch (err) {
+    console.error("[LIA-FREEZE] Submission failed:", err);
     if (evalOptions.deferFeedback && !frozenLink) {
       setDeferredSendPhase('collect');
       refreshDeferredSendMode();
     }
-    setLiveBarStatus("Error: " + (err instanceof Error ? err.message : String(err)));
+    setLiveBarStatus(freezeText("submissionFailed"));
   } finally {
     setSendGradingOverlay(false);
     creatingLink = false;
     if (!frozenLink && createButton) {
       createButton.disabled = false;
-      createButton.textContent = "Create Link";
+      createButton.removeAttribute("data-lia-freeze-state");
+      createButton.textContent = freezeText("createLink");
     }
   }
 }
@@ -1849,7 +1920,9 @@ function clonePrintableSlide(source: Element, slide: DeclaredSlide): HTMLElement
     try {
       const image = document.createElement('img');
       image.src = original.toDataURL('image/png');
-      image.alt = 'Canvas';
+      image.alt = original.getAttribute("aria-label")
+        || original.getAttribute("title")
+        || freezeText("canvasImageAlt");
       image.style.width = original.clientWidth ? original.clientWidth + 'px' : '100%';
       image.style.maxWidth = '100%';
       image.style.height = 'auto';
@@ -1910,7 +1983,7 @@ async function printFrozenEvaluation(): Promise<void> {
   const evaluationParent = evalContainer?.parentNode ?? null;
   const evaluationNextSibling = evalContainer?.nextSibling ?? null;
   printingSubmission = true;
-  setLiveBarStatus('Preparing all slides for PDF...');
+  setLiveBarStatus(freezeText("preparingPdf"));
   const printSlides = await preparePrintableSlides();
   // The evaluation overlay is created before the temporary slide archive in
   // the document. Static print layout follows DOM order, so move the same
@@ -1919,7 +1992,7 @@ async function printFrozenEvaluation(): Promise<void> {
   if (evalContainer) printSlides.after(evalContainer);
   showEvalPlaceholder();
   setPrintReportMode(true);
-  setLiveBarStatus("Opening print dialog…");
+  setLiveBarStatus(freezeText("openingPrintDialog"));
 
   let cleaned = false;
   const cleanup = (): void => {
@@ -1937,24 +2010,23 @@ async function printFrozenEvaluation(): Promise<void> {
     }
     window.removeEventListener("afterprint", cleanup);
     if (!evaluationWasVisible) hideEvalPlaceholder();
-    setLiveBarStatus("Print dialog closed.");
+    setLiveBarStatus(freezeText("printDialogClosed"));
   };
 
   window.addEventListener("afterprint", cleanup, { once: true });
   try {
     window.print();
   } catch (error) {
+    console.error("[LIA-FREEZE] Print dialog failed:", error);
     cleanup();
-    setLiveBarStatus(
-      "Could not open print dialog: "
-      + (error instanceof Error ? error.message : String(error))
-    );
+    setLiveBarStatus(freezeText("printDialogFailed"));
   }
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
 
 async function init(): Promise<void> {
+  applyCourseLanguage(detectRenderedCourseLanguage());
   injectRuntimeCSS();
   configureNativeDomFeedbackRenderer(setAssignmentDetailFeedback);
   configureDeferredSendMode({
@@ -1964,6 +2036,8 @@ async function init(): Promise<void> {
     setQuizStatus: (root, host, text) => {
       setAssignmentDetailSendStatus(root, host, text);
     },
+    formatLoggedStatus: checkCount =>
+      freezeText("answerSaved", { count: checkCount }),
     clearQuizStatuses: clearAssignmentDetailSendStatuses,
     onLogged: () => captureNativeDomNow(getCurrentHash()),
     onReviewResolve: task => {
