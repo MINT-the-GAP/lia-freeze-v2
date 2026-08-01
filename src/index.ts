@@ -115,6 +115,11 @@ import {
   setFreezeLanguage,
   type FreezeLanguage,
 } from "./i18n";
+import {
+  claimFreezeBoot,
+  createThemeRefreshController,
+  getFreezeLifecycleState,
+} from "./theme-sync";
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -133,6 +138,7 @@ let courseDocumentIdentity: CourseDocumentIdentity = {
   courseVersion: "",
 };
 let courseLanguage: FreezeLanguage = "en";
+const freezeLifecycle = getFreezeLifecycleState(window);
 
 let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
@@ -2061,12 +2067,34 @@ async function init(): Promise<void> {
   });
   installAbgabeRestoreObserver();
   installCoordinateMutationRefreshObserver();
-  applyThemeColors();
-  applyCourseColors();
-  setTimeout(refreshAssignmentDetails, 0);
-  new MutationObserver(() => { applyThemeColors(); applyCourseColors(); }).observe(document.documentElement, {
-    attributes: true, attributeFilter: ["class", "style", "data-theme"],
+  freezeLifecycle.themeRefreshCleanup?.();
+  freezeLifecycle.themeRefresh?.cleanup();
+  const themeRefresh = createThemeRefreshController({
+    root: document.documentElement,
+    refresh: () => {
+      applyThemeColors();
+      applyCourseColors();
+    },
   });
+  freezeLifecycle.themeRefresh = themeRefresh;
+  const cleanupThemeRefresh = (): void => {
+    window.removeEventListener("pagehide", handleThemePageHide);
+    if (freezeLifecycle.themeRefresh === themeRefresh) {
+      themeRefresh.cleanup();
+      delete freezeLifecycle.themeRefresh;
+    }
+    if (freezeLifecycle.themeRefreshCleanup === cleanupThemeRefresh) {
+      delete freezeLifecycle.themeRefreshCleanup;
+    }
+  };
+  const handleThemePageHide = (event: PageTransitionEvent): void => {
+    if ((event as PageTransitionEvent).persisted) return;
+    cleanupThemeRefresh();
+  };
+  freezeLifecycle.themeRefreshCleanup = cleanupThemeRefresh;
+  window.addEventListener("pagehide", handleThemePageHide);
+  themeRefresh.refreshNow();
+  setTimeout(refreshAssignmentDetails, 0);
   // Patch history.pushState/replaceState so LiaScript arrow navigation triggers onHashChange
   const _push = history.pushState.bind(history);
   const _replace = history.replaceState.bind(history);
@@ -2104,11 +2132,16 @@ async function init(): Promise<void> {
 }
 
 function safeBoot(): void {
-  init().catch(err => console.error("[LIA-FREEZE]", err));
+  init().catch(err => {
+    freezeLifecycle.themeRefreshCleanup?.();
+    console.error("[LIA-FREEZE]", err);
+  });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", safeBoot);
-} else {
-  setTimeout(safeBoot, 0);
+if (claimFreezeBoot(freezeLifecycle)) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", safeBoot, { once: true });
+  } else {
+    setTimeout(safeBoot, 0);
+  }
 }

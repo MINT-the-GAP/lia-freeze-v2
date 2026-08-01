@@ -14,6 +14,10 @@ import {
   freezeText,
   localizeSubmissionUi,
 } from "./i18n";
+import {
+  removeStylePropertyIfPresent,
+  setStylePropertyIfChanged,
+} from "./theme-sync";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -627,25 +631,34 @@ export function applyCourseColors(): void {
   const nums = fg.match(/\d+(\.\d+)?/g) || [];
   const border = nums.length >= 3 ? `rgba(${nums[0]},${nums[1]},${nums[2]},0.22)` : "rgba(0,0,0,0.22)";
   const root = document.documentElement;
-  root.style.setProperty("--lia-course-bg", bg);
-  root.style.setProperty("--lia-course-fg", fg);
-  root.style.setProperty("--lia-course-border", border);
+  setStylePropertyIfChanged(root.style, "--lia-course-bg", bg);
+  setStylePropertyIfChanged(root.style, "--lia-course-fg", fg);
+  setStylePropertyIfChanged(root.style, "--lia-course-border", border);
 }
 
 export function applyThemeColors(): void {
   const raw = (getComputedStyle(document.body).getPropertyValue("--color-highlight") ||
                getComputedStyle(document.documentElement).getPropertyValue("--color-highlight")).trim();
   const nums = raw.match(/\d+(\.\d+)?/g) || [];
-  if (nums.length < 3) return;
+  const root = document.documentElement;
+  if (nums.length < 3) {
+    [
+      "--lia-submit-bg-rgb",
+      "--lia-submit-fg",
+      "--lia-submit-border-on-theme",
+      "--lia-submit-button-bg",
+      "--lia-submit-note-bg",
+    ].forEach(property => removeStylePropertyIfPresent(root.style, property));
+    return;
+  }
   const [r, g, b] = [Number(nums[0]), Number(nums[1]), Number(nums[2])];
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const bright = luminance > 160;
-  const root = document.documentElement;
-  root.style.setProperty("--lia-submit-bg-rgb", `${r}, ${g}, ${b}`);
-  root.style.setProperty("--lia-submit-fg", bright ? "#111111" : "#ffffff");
-  root.style.setProperty("--lia-submit-border-on-theme", bright ? "rgba(0,0,0,.24)" : "rgba(255,255,255,.34)");
-  root.style.setProperty("--lia-submit-button-bg", bright ? "rgba(255,255,255,.38)" : "rgba(255,255,255,.14)");
-  root.style.setProperty("--lia-submit-note-bg", bright ? "rgba(255,255,255,.30)" : "rgba(0,0,0,.14)");
+  setStylePropertyIfChanged(root.style, "--lia-submit-bg-rgb", `${r}, ${g}, ${b}`);
+  setStylePropertyIfChanged(root.style, "--lia-submit-fg", bright ? "#111111" : "#ffffff");
+  setStylePropertyIfChanged(root.style, "--lia-submit-border-on-theme", bright ? "rgba(0,0,0,.24)" : "rgba(255,255,255,.34)");
+  setStylePropertyIfChanged(root.style, "--lia-submit-button-bg", bright ? "rgba(255,255,255,.38)" : "rgba(255,255,255,.14)");
+  setStylePropertyIfChanged(root.style, "--lia-submit-note-bg", bright ? "rgba(255,255,255,.30)" : "rgba(0,0,0,.14)");
 }
 
 export function setPrintReportHeader(data: PrintReportHeaderData): void {
@@ -800,7 +813,11 @@ export function setFreezeBarState(state: FreezeBarState): void {
   // keep body padding in sync with bar height
   const h = (bar as HTMLElement).offsetHeight || 64;
   document.body.style.paddingTop = (h + 10) + "px";
-  document.documentElement.style.scrollPaddingTop = (h + 10) + "px";
+  setStylePropertyIfChanged(
+    document.documentElement.style,
+    "scroll-padding-top",
+    (h + 10) + "px",
+  );
 }
 
 // ── Page frozen state ─────────────────────────────────────────────────────────

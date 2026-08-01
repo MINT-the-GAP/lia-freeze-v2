@@ -1,3 +1,5 @@
 node_modules
 .parcel-cache
 *.map
+playwright-report
+test-results
