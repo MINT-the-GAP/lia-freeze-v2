@@ -2044,6 +2044,7 @@ async function init(): Promise<void> {
     },
     formatLoggedStatus: checkCount =>
       freezeText("answerSaved", { count: checkCount }),
+    formatCheckButtonLabel: () => freezeText("sendCheckButton"),
     clearQuizStatuses: clearAssignmentDetailSendStatuses,
     onLogged: () => captureNativeDomNow(getCurrentHash()),
     onReviewResolve: task => {

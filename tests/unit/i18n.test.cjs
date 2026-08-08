@@ -91,7 +91,7 @@ test('provides complete English and German dictionaries and safe fallbacks', asy
     'sendGrading', 'creatingSubmissionLink', 'submissionFailed', 'preparingPdf',
     'openingPrintDialog', 'printDialogClosed', 'printDialogFailed',
     'canvasImageAlt',
-    'answerSaved', 'quizStatus', 'taskNumber', 'quiz', 'awardedPoints',
+    'answerSaved', 'sendCheckButton', 'quizStatus', 'taskNumber', 'quiz', 'awardedPoints',
     'valueNotProvided', 'valueNotStored',
   ];
   const values = { time: '04:03', duration: 45, count: 2, number: 3, maximum: 5 };
@@ -107,6 +107,8 @@ test('provides complete English and German dictionaries and safe fallbacks', asy
   assert.equal(freezeText('submissionHeading', {}, 'de'), 'Abgabelink erstellen');
   assert.equal(freezeText('taskNumber', { number: 7 }, 'en'), 'Task 7');
   assert.equal(freezeText('taskNumber', { number: 7 }, 'de'), 'Aufgabe 7');
+  assert.equal(freezeText('sendCheckButton', {}, 'en'), 'Submit');
+  assert.equal(freezeText('sendCheckButton', {}, 'de'), 'Abschicken');
   assert.equal(localeForLanguage('en'), 'en-US');
   assert.equal(localeForLanguage('de'), 'de-DE');
   try {

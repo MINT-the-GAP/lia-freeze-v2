@@ -28,6 +28,7 @@ export interface DeferredSendContext {
   getContentHost(targetDocument: Document): Element | null;
   setQuizStatus?(root: Element, contentHost: Element, text: string): void;
   formatLoggedStatus?(checkCount: number): string;
+  formatCheckButtonLabel?(): string;
   clearQuizStatuses?(targetDocument: Document): void;
   onLogged?(task: DeferredSendTask): void;
   onReviewResolve?(task: DeferredSendTask): void;
@@ -47,7 +48,10 @@ const loggedTaskKeys = new Set<string>();
 const checkCountByTaskKey = new Map<string, number>();
 const boundWindows = new WeakSet<Window>();
 const observedDocuments = new WeakMap<Document, MutationObserver>();
+const originalCheckButtonLabels = new WeakMap<Element, string>();
+const statusDismissTimers = new Map<string, { runtimeWindow: Window; timer: number }>();
 const MAX_CHECK_COUNT = 100000;
+const STATUS_DISMISS_DELAY_MS = 10_000;
 
 function normalizeHash(raw: string): string {
   const value = String(raw || "").trim();
@@ -87,17 +91,65 @@ function taskForQuizRoot(root: Element): DeferredSendTask | null {
   return hash && taskIndex >= 0 ? { hash, taskIndex } : null;
 }
 
-function ensureLoggedStatus(root: Element, checkCount: number): void {
+function clearStatusDismissTimer(key: string): void {
+  const pending = statusDismissTimers.get(key);
+  if (!pending) return;
+  pending.runtimeWindow.clearTimeout(pending.timer);
+  statusDismissTimers.delete(key);
+}
+
+function clearStatusDismissTimers(): void {
+  Array.from(statusDismissTimers.keys()).forEach(clearStatusDismissTimer);
+}
+
+function scheduleStatusDismissal(
+  root: Element,
+  contentHost: Element,
+  task: DeferredSendTask,
+  key: string,
+  configuredContext: DeferredSendContext
+): void {
+  const runtimeWindow = root.ownerDocument.defaultView;
+  if (!runtimeWindow) return;
+  clearStatusDismissTimer(key);
+  const timer = runtimeWindow.setTimeout(() => {
+    const pending = statusDismissTimers.get(key);
+    if (!pending || pending.timer !== timer) return;
+    statusDismissTimers.delete(key);
+    if (phase !== "collect" || context !== configuredContext) return;
+
+    // Clear the originally rendered sidecar as well as a replacement quiz root
+    // if LiaScript remounted the current slide during the ten-second window.
+    configuredContext.setQuizStatus?.(root, contentHost, "");
+    let currentHost: Element | null = null;
+    try { currentHost = configuredContext.getContentHost(root.ownerDocument); } catch { /* noop */ }
+    if (!currentHost || normalizeHash(configuredContext.getHash()) !== task.hash) return;
+    const currentRoot = currentHost.querySelectorAll(".lia-quiz")[task.taskIndex];
+    if (currentRoot && currentRoot !== root) {
+      configuredContext.setQuizStatus?.(currentRoot, currentHost, "");
+    }
+  }, STATUS_DISMISS_DELAY_MS);
+  statusDismissTimers.set(key, { runtimeWindow, timer });
+}
+
+function ensureLoggedStatus(
+  root: Element,
+  task: DeferredSendTask,
+  key: string,
+  checkCount: number
+): void {
   if (!context) return;
   const host = context.getContentHost(root.ownerDocument);
   if (!host) return;
-  context.setQuizStatus?.(
+  const configuredContext = context;
+  configuredContext.setQuizStatus?.(
     root,
     host,
-    context.formatLoggedStatus?.(checkCount)
+    configuredContext.formatLoggedStatus?.(checkCount)
       ?? ("Antwort gespeichert. Prüfen-Klicks: " + checkCount
         + ". Die Auswertung erfolgt nach der Abgabe.")
   );
+  scheduleStatusDismissal(root, host, task, key, configuredContext);
 }
 
 function logQuizRoot(root: Element, showStatus: boolean, countCheck = false): void {
@@ -111,7 +163,9 @@ function logQuizRoot(root: Element, showStatus: boolean, countCheck = false): vo
   }
   const added = !loggedTaskKeys.has(key);
   loggedTaskKeys.add(key);
-  if (showStatus) ensureLoggedStatus(root, checkCountByTaskKey.get(key) ?? 0);
+  if (showStatus) {
+    ensureLoggedStatus(root, task, key, checkCountByTaskKey.get(key) ?? 0);
+  }
   if (added) context?.onLogged?.(task);
 }
 
@@ -200,12 +254,30 @@ body.lia-send-review .hlq-proxy [data-hlq-act="solve"]:not(:disabled) {
   (targetDocument.head ?? targetDocument.documentElement).appendChild(style);
 }
 
+function syncCheckButtonLabels(targetDocument: Document): void {
+  const collectLabel = context?.formatCheckButtonLabel?.().trim() ?? "";
+  targetDocument.querySelectorAll<HTMLElement>(".lia-quiz__check").forEach(button => {
+    if (phase === "collect" && collectLabel) {
+      if (!originalCheckButtonLabels.has(button)) {
+        originalCheckButtonLabels.set(button, button.textContent ?? "");
+      }
+      if (button.textContent !== collectLabel) button.textContent = collectLabel;
+      return;
+    }
+    const originalLabel = originalCheckButtonLabels.get(button);
+    if (originalLabel === undefined) return;
+    if (button.textContent !== originalLabel) button.textContent = originalLabel;
+    originalCheckButtonLabels.delete(button);
+  });
+}
+
 function applyPhaseToDocument(targetDocument: Document): void {
   injectSendStyle(targetDocument);
   const body = targetDocument.body;
   if (!body) return;
   SEND_PHASE_CLASSES.forEach(name => body.classList.remove(name));
   if (phase !== "off") body.classList.add("lia-send-" + phase);
+  syncCheckButtonLabels(targetDocument);
   if (phase !== "collect") {
     context?.clearQuizStatuses?.(targetDocument);
   }
@@ -234,6 +306,7 @@ function bindRuntimeWindow(runtimeWindow: Window): void {
 }
 
 export function configureDeferredSendMode(nextContext: DeferredSendContext): void {
+  clearStatusDismissTimers();
   context = nextContext;
   loggedTaskKeys.clear();
   checkCountByTaskKey.clear();
@@ -241,6 +314,7 @@ export function configureDeferredSendMode(nextContext: DeferredSendContext): voi
 }
 
 export function setDeferredSendPhase(nextPhase: DeferredSendPhase): void {
+  if (nextPhase !== "collect") clearStatusDismissTimers();
   phase = nextPhase;
   refreshDeferredSendMode();
 }

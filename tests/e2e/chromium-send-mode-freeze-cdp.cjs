@@ -151,6 +151,8 @@ function assertCollectState(state, label) {
     label + ' was not logged neutrally: ' + JSON.stringify(state));
   assert(!/\b(?:trial|attempt|Versuch)\b|\d/.test(state.check?.text || ''),
     label + ' consumed a visible quiz trial: ' + JSON.stringify(state.check));
+  assert(state.check?.text === 'Abschicken',
+    label + ' did not rename the Send check action: ' + JSON.stringify(state.check));
   assert(!state.feedback.text,
     label + ' exposed feedback before Freeze: ' + JSON.stringify(state.feedback));
   assert(state.status.startsWith('Antwort gespeichert'),
