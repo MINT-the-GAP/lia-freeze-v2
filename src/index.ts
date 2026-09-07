@@ -61,6 +61,7 @@ import {
   getContentHostForDocument,
 } from "./freeze-ui";
 import {
+  escapeHtml,
   parseEvaluationOptions,
   parseDeclaredSlides,
   parseAbgabeHash,
@@ -170,6 +171,7 @@ const annotationProgressRuntimeWindows = new WeakSet<Window>();
 const coordinateProgressRuntimeWindows = new WeakSet<Window>();
 const runtimeMutationObserverDocuments = new WeakSet<Document>();
 const localizedUiObserverDocuments = new WeakSet<Document>();
+const abgabeRestoreObserverDocuments = new WeakSet<Document>();
 const COORDINATE_REFRESH_DELAYS = [80, 300, 800, 1600, 3200, 6000] as const;
 const CANVAS_REFRESH_DELAYS = [40, 120, 360, 800, 1600, 3200, 6000] as const;
 const CANVAS_CAPTURE_COOLDOWN_MS = 180;
@@ -729,8 +731,8 @@ function renderExamIntroCard(): HTMLElement {
       '<label style="display:block;font-size:4.25rem;font-weight:700;margin:0 0 .4rem 0;">' +
         freezeText("nameLabel") + '</label>' +
       '<input class="lia-exam-name-input" type="text" placeholder="' +
-      freezeText("namePlaceholder").replace(/"/g, "&quot;") + '" value="' +
-      initialName.replace(/"/g, "&quot;") +
+      escapeHtml(freezeText("namePlaceholder")) + '" value="' +
+      escapeHtml(initialName) +
       '" style="width:100%;box-sizing:border-box;padding:.6rem .75rem;border-radius:10px;' +
       'border:1px solid color-mix(in srgb,#c1121f 35%,var(--lia-course-border) 65%);' +
       'background:var(--lia-course-bg);color:var(--lia-course-fg);font-size:4rem;">' +
@@ -1045,6 +1047,13 @@ function applyFrozenAbgabeValues(): void {
 }
 
 function installAbgabeRestoreObserver(): void {
+  // The bundle can be evaluated more than once; without this guard a second
+  // boot would stack another observer on the same body.
+  if (abgabeRestoreObserverDocuments.has(document)) {
+    refreshLocalizedRuntimeUi();
+    return;
+  }
+  abgabeRestoreObserverDocuments.add(document);
   const obs = new MutationObserver(() => {
     refreshLocalizedRuntimeUi();
     if (!frozenLink) return;

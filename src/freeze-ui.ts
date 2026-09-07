@@ -1838,7 +1838,7 @@ export function setLiveBarFrozen(linkUrl: string, name: string): void {
   if (linkEl) {
     linkEl.value = linkUrl;
     linkEl.disabled = false;
-    (linkEl as any).readOnly = true;
+    linkEl.readOnly = true;
     linkEl.style.pointerEvents = "auto";
     linkEl.style.userSelect = "text";
   }
@@ -1865,7 +1865,7 @@ export async function copyLinkToClipboard(url: string): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(url);
       return true;
-    } catch (_) {}
+    } catch { /* clipboard permission denied — fall through to the textarea path */ }
   }
 
   // Fallback: temporary textarea
@@ -1880,7 +1880,7 @@ export async function copyLinkToClipboard(url: string): Promise<boolean> {
     ta.select();
     ta.setSelectionRange(0, url.length);
     ok = document.execCommand("copy");
-  } catch (_) {}
+  } catch { /* legacy copy path is best-effort; ok stays false and the caller reports failure */ }
   ta.remove();
   return ok;
 }
