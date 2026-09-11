@@ -16,6 +16,7 @@ import {
   setAssignmentDetailSendStatus,
 } from './adetails-dom';
 import { installPortIntercept } from "./port";
+import { createCanvasProgressScheduler } from "./canvas-progress";
 import {
   activateAnnotationSnapshot,
   activateCanvasSnapshot,
@@ -24,6 +25,7 @@ import {
   captureAnnotationProgress,
   captureSnapshot,
   captureCanvasProgress,
+  prepareCanvasSubmission,
   captureCoordinateProgress,
   refreshAnnotationRender,
   refreshCanvasRender,
@@ -151,10 +153,6 @@ let gradingSendSubmission = false;
 const reviewedSendSolutionKeys = new Set<string>();
 let printingSubmission = false;
 let freezeNavigationInstalled = false;
-let canvasAcceptEmptyCaptureQueued = false;
-let canvasProgressCaptureQueued = false;
-let canvasTrailingCaptureTimer = 0;
-let lastCanvasCaptureAttemptAt = 0;
 let canvasRefreshGeneration = 0;
 let coordinateProgressCaptureQueued = false;
 let coordinateMutationRefreshTimer = 0;
@@ -174,7 +172,6 @@ const localizedUiObserverDocuments = new WeakSet<Document>();
 const abgabeRestoreObserverDocuments = new WeakSet<Document>();
 const COORDINATE_REFRESH_DELAYS = [80, 300, 800, 1600, 3200, 6000] as const;
 const CANVAS_REFRESH_DELAYS = [40, 120, 360, 800, 1600, 3200, 6000] as const;
-const CANVAS_CAPTURE_COOLDOWN_MS = 180;
 const ANNOTATION_REFRESH_DELAYS = [40, 120, 360, 800, 1600, 3200, 6000] as const;
 
 function refreshLocalizedRuntimeUi(): void {
@@ -219,9 +216,16 @@ function eventElement(event: Event): Element | null {
 }
 
 function captureCanvasProgressBestEffort(
-  options: { acceptEmptyChanges?: boolean } = {}
+  options: { dirtyUIDs?: ReadonlySet<string>; acceptEmptyUIDs?: ReadonlySet<string> } = {}
 ): void {
-  lastCanvasCaptureAttemptAt = Date.now();
+  if (document.body?.classList.contains("lia-course-frozen")) return;
+  if (canvasProgressScheduler.hasActivePointers()) {
+    for (const uid of options.dirtyUIDs ?? []) {
+      canvasProgressScheduler.schedule(uid, options.acceptEmptyUIDs?.has(uid));
+    }
+    canvasProgressScheduler.schedule();
+    return;
+  }
   try {
     captureCanvasProgress(options);
     canvasCaptureWarningShown = false;
@@ -232,58 +236,87 @@ function captureCanvasProgressBestEffort(
   }
 }
 
-function flushScheduledCanvasProgressCapture(): void {
-  if (document.body?.classList.contains("lia-course-frozen")) {
-    canvasAcceptEmptyCaptureQueued = false;
-    return;
-  }
-  const remaining = CANVAS_CAPTURE_COOLDOWN_MS - (Date.now() - lastCanvasCaptureAttemptAt);
-  if (remaining > 0) {
-    if (!canvasTrailingCaptureTimer) {
-      canvasTrailingCaptureTimer = window.setTimeout(() => {
-        canvasTrailingCaptureTimer = 0;
-        flushScheduledCanvasProgressCapture();
-      }, remaining);
-    }
-    return;
-  }
-  const acceptQueuedEmpty = canvasAcceptEmptyCaptureQueued;
-  canvasAcceptEmptyCaptureQueued = false;
-  captureCanvasProgressBestEffort({ acceptEmptyChanges: acceptQueuedEmpty });
-}
+const canvasProgressScheduler = createCanvasProgressScheduler({
+  capture: captureCanvasProgressBestEffort,
+  isFrozen: () => !!document.body?.classList.contains("lia-course-frozen"),
+});
 
-function scheduleCanvasProgressCapture(acceptEmptyChanges = false): void {
-  if (document.body?.classList.contains("lia-course-frozen")) return;
-  canvasAcceptEmptyCaptureQueued ||= acceptEmptyChanges;
-  if (canvasProgressCaptureQueued) return;
-  canvasProgressCaptureQueued = true;
-  queueMicrotask(() => {
-    canvasProgressCaptureQueued = false;
-    flushScheduledCanvasProgressCapture();
-  });
+function canvasEventUid(event: Event): string {
+  const detail = (event as CustomEvent<{ uid?: unknown }>).detail;
+  if (detail && typeof detail.uid === "string") return detail.uid;
+  const pair = eventElement(event)?.closest(".lia-canvas-pair");
+  return (pair?.querySelector(".lia-canvas-mount") as HTMLElement | null)?.dataset.uid ?? "";
 }
 
 function installCanvasProgressCapture(): void {
   for (const runtimeWindow of sameOriginRuntimeWindows()) {
     if (canvasProgressRuntimeWindows.has(runtimeWindow)) continue;
     canvasProgressRuntimeWindows.add(runtimeWindow);
-    ["pointerup", "click", "input", "change"].forEach(type => {
+    const pointers = new Map<number, { key: object; uid: string }>();
+    const activities = new Map<string, object>();
+    runtimeWindow.addEventListener("pointerdown", event => {
+      if (!eventElement(event)?.closest(".lia-canvas-pair")) return;
+      const pointer = {};
+      const previous = pointers.get(event.pointerId);
+      if (previous) canvasProgressScheduler.end(previous.key, previous.uid);
+      pointers.set(event.pointerId, { key: pointer, uid: canvasEventUid(event) });
+      canvasProgressScheduler.begin(pointer, runtimeWindow);
+    }, true);
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => {
       runtimeWindow.addEventListener(type, event => {
-        const target = eventElement(event);
-        if (!target?.closest(".lia-canvas-pair")) return;
-        scheduleCanvasProgressCapture(true);
+        const pointerId = (event as PointerEvent).pointerId;
+        const pointer = pointers.get(pointerId);
+        const uid = canvasEventUid(event) || pointer?.uid;
+        if (pointer) {
+          pointers.delete(pointerId);
+          canvasProgressScheduler.end(pointer.key, uid, true);
+        } else if (uid && type === "pointerup") {
+          canvasProgressScheduler.schedule(uid, true);
+        }
       }, true);
     });
-    runtimeWindow.addEventListener(
-      "pagehide",
-      () => captureCanvasProgressBestEffort(),
-      true,
-    );
-    runtimeWindow.addEventListener(
-      "lia:canvas-change",
-      () => scheduleCanvasProgressCapture(true),
-      true,
-    );
+    ["click", "input", "change", "wheel"].forEach(type => {
+      runtimeWindow.addEventListener(type, event => {
+        if (!eventElement(event)?.closest(".lia-canvas-pair")) return;
+        canvasProgressScheduler.schedule(canvasEventUid(event), true);
+      }, { capture: true, passive: true });
+    });
+    runtimeWindow.addEventListener("blur", event => {
+      if (event.target !== runtimeWindow) return;
+      for (const pointer of pointers.values()) canvasProgressScheduler.schedule(pointer.uid, true);
+      pointers.clear();
+      activities.clear();
+      canvasProgressScheduler.cancelPointers(runtimeWindow);
+    }, true);
+    runtimeWindow.addEventListener("pagehide", () => {
+      for (const pointer of pointers.values()) canvasProgressScheduler.schedule(pointer.uid, true);
+      pointers.clear();
+      activities.clear();
+      canvasProgressScheduler.cancelPointers(runtimeWindow);
+      canvasProgressScheduler.flush();
+      captureCanvasProgressBestEffort();
+    }, true);
+    runtimeWindow.addEventListener("lia:canvas-change", event => {
+      canvasProgressScheduler.schedule(canvasEventUid(event), true);
+    }, true);
+    // New Canvas versions also signal programmatic strokes, pan/zoom and
+    // resize activity. DOM pointer tracking remains the older-version fallback.
+    runtimeWindow.addEventListener("lia:canvas-activity", event => {
+      const uid = canvasEventUid(event);
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+      if (!uid) return;
+      if (detail?.active) {
+        if (activities.has(uid)) return;
+        const activity = {};
+        activities.set(uid, activity);
+        canvasProgressScheduler.begin(activity, runtimeWindow);
+      } else {
+        const activity = activities.get(uid);
+        if (!activity) return;
+        activities.delete(uid);
+        canvasProgressScheduler.end(activity, uid, true);
+      }
+    }, true);
   }
 }
 
@@ -1814,6 +1847,8 @@ async function doCreateLink(): Promise<void> {
   }
   setLiveBarStatus(freezeText("creatingSubmissionLink"));
   try {
+    canvasProgressScheduler.flush();
+    prepareCanvasSubmission();
     stopCurrentSlideTimer();
     // Copy learner Check counts before any technical grading action. The
     // grading phase is intercepted separately, but this makes the submitted
@@ -1884,6 +1919,7 @@ async function doCreateLink(): Promise<void> {
     setDeferredSendPhase(evalOptions.deferFeedback ? 'review' : 'off');
     refreshDeferredSendMode();
     setPageFrozen(true, false);
+    canvasProgressScheduler.clear();
     scheduleNativeDomRestore(getCurrentHash());
     installFrozenNavigation();
     const canvasSlide = snapshot.s.find(slide => Array.isArray(slide.canvas));

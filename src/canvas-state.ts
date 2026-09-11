@@ -11,6 +11,91 @@ export const CANVAS_GRID_STEP_PX = 2.25;
 export const CANVAS_MIN_RAW_POINT_DISTANCE_PX = 1.25;
 export const CANVAS_DOUGLAS_PEUCKER_TOLERANCE_PX = 1.4;
 
+/** Revision metadata is cheap; the detached state is read only on a change. */
+export interface CanvasLiveRevision {
+  uid: string;
+  revision: number;
+}
+
+export interface CanvasLiveCapture extends CanvasLiveRevision {
+  state: unknown;
+}
+
+export interface CanvasLiveStateApi {
+  listCanvasLiveStateRevisions(root: Document | Element): CanvasLiveRevision[];
+  exportCanvasLiveStateByUID(uid: string): CanvasLiveCapture | null;
+}
+
+/**
+ * Per-API cache. Never stringify, project geometry or compact in this path.
+ * A null export is an unavailable canvas, not a Clear action. In particular,
+ * temporarily unmounted slides retain their last detached state.
+ */
+export class CanvasLiveStateCache {
+  private readonly states = new Map<string, CanvasLiveCapture>();
+  private readonly knownUIDs = new Set<string>();
+
+  entries(): IterableIterator<CanvasLiveCapture> {
+    return this.states.values();
+  }
+
+  capture(api: CanvasLiveStateApi, root: Document | Element, extraUIDs: Iterable<string> = []): CanvasLiveCapture[] {
+    const changed: CanvasLiveCapture[] = [];
+    const revisions = api.listCanvasLiveStateRevisions(root);
+    const descriptors = new Map<string, number>();
+    for (const descriptor of Array.isArray(revisions) ? revisions : []) {
+      if (!descriptor || typeof descriptor.uid !== "string" || !descriptor.uid
+        || !Number.isSafeInteger(descriptor.revision) || descriptor.revision < 0) continue;
+      descriptors.set(descriptor.uid, descriptor.revision);
+      this.knownUIDs.add(descriptor.uid);
+    }
+    const pendingUIDs = new Set(extraUIDs);
+    for (const uid of pendingUIDs) if (uid) this.knownUIDs.add(uid);
+    for (const [uid, revision] of descriptors) {
+      pendingUIDs.delete(uid);
+      if (this.states.get(uid)?.revision === revision) continue;
+      const captured = this.read(api, uid);
+      if (captured) changed.push(captured);
+    }
+    for (const uid of pendingUIDs) {
+      if (!uid) continue;
+      const captured = this.read(api, uid);
+      if (captured) changed.push(captured);
+    }
+    for (const captured of changed) this.states.set(captured.uid, captured);
+    return changed;
+  }
+
+  // Submission also probes previously mounted UIDs: a slide can disappear
+  // before its delayed canvas-change notification reaches Freeze.
+  refreshKnown(api: CanvasLiveStateApi): CanvasLiveCapture[] {
+    const changed: CanvasLiveCapture[] = [];
+    for (const uid of this.knownUIDs) {
+      const captured = this.read(api, uid);
+      if (captured) changed.push(captured);
+    }
+    for (const captured of changed) this.states.set(captured.uid, captured);
+    return changed;
+  }
+
+  private read(api: CanvasLiveStateApi, uid: string): CanvasLiveCapture | null {
+    let captured: CanvasLiveCapture | null;
+    try { captured = api.exportCanvasLiveStateByUID(uid); }
+    catch (error) {
+      throw new Error(`Canvas "${uid}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!captured) return null;
+    if (captured.uid !== uid || !Number.isSafeInteger(captured.revision)
+      || captured.revision < 0 || captured.state == null) {
+      throw new Error(`Canvas "${uid}": Invalid live state export.`);
+    }
+    const previous = this.states.get(uid);
+    if (previous?.revision === captured.revision) return previous;
+    // Use the export's revision, which can be newer than the descriptor.
+    return captured;
+  }
+}
+
 const CANVAS_PATH_MAGIC = 3;
 const CANVAS_UID_PACK_FACTOR = 64;
 const PATH_RUN_SEPARATOR = "~";
@@ -849,6 +934,7 @@ export function canvasDimensionsCoverContent(
 export interface FullCanvasViewport {
   width?: unknown;
   height?: unknown;
+  accentColor?: string;
 }
 
 function firstCanvasDimension(...values: unknown[]): number | null {
@@ -1001,7 +1087,7 @@ export function buildFullCanvasFreezeState(
       includeBounds(x + rectWidth, y + rectHeight);
       items.push({
         k: "r",
-        f: fullCanvasRgba(value.color, alpha),
+        f: fullCanvasRgba(value.color ?? viewport.accentColor, alpha),
         x,
         y,
         w: rectWidth,
@@ -1052,7 +1138,7 @@ export function buildFullCanvasFreezeState(
     if (!(step > 0) || step > MAX_CANVAS_DIMENSION_PX) return null;
     const color = rawBackground && safeCanvasColor(rawBackground.c)
       ? String(rawBackground.c)
-      : "rgba(20,115,117,0.65)";
+      : fullCanvasRgba(viewport.accentColor, 0.65);
     const lineWidth = rawBackground ? strictFinite(rawBackground.lw) : null;
     background = {
       m: mode,

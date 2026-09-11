@@ -43,6 +43,8 @@ import { sameOriginRuntimeWindows } from './runtime-windows';
 import type { DevtoolsEvidenceV1, FullscreenEvidenceV1 } from './security';
 import {
   buildFullCanvasFreezeState,
+  CanvasLiveStateCache,
+  CanvasLiveStateApi,
   compactCanvasStates,
   expandCanvasStatesForRestore,
   getCanvasStateUid,
@@ -56,8 +58,9 @@ import {
   mergeAnnotationFreezeStates,
 } from './annotation-state';
 
-interface CanvasFreezeApi {
-  exportAllCanvasFreezeStatesFromRoot(root: Document | Element): unknown[];
+interface CanvasFreezeApi extends Partial<CanvasLiveStateApi> {
+  exportAllCanvasFreezeStatesFromRoot?(root: Document | Element): unknown[];
+  getCanvasLiveActivityByUID?(uid: string): { active: boolean } | null;
   renderCanvasFreezeStateIntoPair?(pair: Element, state: unknown): Element | null;
   collectCanvasPairsFromRoot?(root: Document | Element): Element[];
   getCanvasUidFromPair?(pair: Element): string;
@@ -188,7 +191,7 @@ function canvasRuntimeBindings(): CanvasRuntimeBinding[] {
     try {
       const api = runtimeWindow.__LIA_CANVAS_OCR__?.freeze;
       const runtimeDocument = runtimeWindow.document;
-      if (!api?.exportAllCanvasFreezeStatesFromRoot || !runtimeDocument) continue;
+      if (!api || !runtimeDocument) continue;
       if (bindings.some(binding => binding.api === api && binding.runtimeDocument === runtimeDocument)) continue;
       bindings.push({ runtimeWindow, runtimeDocument, api });
     } catch { /* best-effort across same-origin runtime windows */ }
@@ -277,20 +280,21 @@ function canvasDefaultPenColor(pair: Element): string {
   return "";
 }
 
-function withCanvasThemeSemantic(state: unknown, pair: Element | undefined): unknown {
-  if (!pair || !state || typeof state !== "object" || Array.isArray(state)) return state;
+function withCanvasThemeSemantic(state: unknown, pair: Element | undefined, savedColor = ""): unknown {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
   const record = state as Record<string, unknown>;
   const items = record.it;
   if (!Array.isArray(items)) return state;
-  const defaultColor = canvasDefaultPenColor(pair);
-  const normalizedDefault = normalizeCssColor(pair.ownerDocument, defaultColor);
+  const runtimeDocument = pair?.ownerDocument ?? document;
+  const defaultColor = savedColor || (pair ? canvasDefaultPenColor(pair) : "");
+  const normalizedDefault = normalizeCssColor(runtimeDocument, defaultColor);
   if (!normalizedDefault) return state;
   let changed = false;
   const themedItems = items.map(item => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return item;
     const path = item as Record<string, unknown>;
     if (path.k !== "p" || path.ck === "default") return item;
-    if (normalizeCssColor(pair.ownerDocument, path.c) !== normalizedDefault) return item;
+    if (normalizeCssColor(runtimeDocument, path.c) !== normalizedDefault) return item;
     changed = true;
     return { ...path, ck: "default" };
   });
@@ -315,32 +319,30 @@ function materializeCanvasTheme(state: unknown, pair: Element): unknown {
   return changed ? { ...record, it: themedItems } : state;
 }
 
-function captureMountedCanvasStates(): unknown[] {
-  const output: unknown[] = [];
-  const indexByUid = new Map<string, number>();
-  for (const binding of canvasRuntimeBindings()) {
-    try {
-      const pairsByUid = canvasPairsByUid(binding);
-      const captured = binding.api.exportAllCanvasFreezeStatesFromRoot(binding.runtimeDocument);
-      for (const rawState of Array.isArray(captured) ? captured : []) {
-        const uid = getCanvasStateUid(rawState);
-        const pair = uid ? pairsByUid.get(uid) : undefined;
-        const fullState = withFullCanvasGeometry(rawState, pair, binding.api);
-        const state = withCanvasThemeSemantic(fullState, pair);
-        if (uid && indexByUid.has(uid)) {
-          output[indexByUid.get(uid)!] = state;
-        } else {
-          if (uid) indexByUid.set(uid, output.length);
-          output.push(state);
-        }
-      }
-    } catch { /* one runtime must not suppress states captured from another */ }
-  }
-  return output;
+interface CanvasProgressState {
+  uid: string;
+  state: unknown;
+  runtimeDocument: Document;
+  defaultPenColor: string;
+  api: CanvasFreezeApi;
 }
 
+interface LegacyCanvasProgress {
+  source: unknown;
+  state: unknown;
+}
+
+export interface CanvasCaptureOptions {
+  dirtyUIDs?: ReadonlySet<string>;
+  acceptEmptyUIDs?: ReadonlySet<string>;
+  acceptEmptyChanges?: boolean;
+}
+
+const liveCanvasCaches = new WeakMap<CanvasFreezeApi, CanvasLiveStateCache>();
+const legacyCanvasCaches = new WeakMap<CanvasFreezeApi, Map<string, LegacyCanvasProgress>>();
+const canvasProgressByUID = new Map<string, CanvasProgressState>();
 let accumulatedCanvasStates: unknown[] = [];
-let pendingCanvasCaptureError: { error: Error; uid: string } | null = null;
+const canvasCaptureErrors = new Map<CanvasFreezeApi, Map<string, Error>>();
 
 function normalizedCanvasCaptureError(error: unknown): { error: Error; uid: string } {
   const normalized = error instanceof Error ? error : new Error(String(error));
@@ -348,32 +350,174 @@ function normalizedCanvasCaptureError(error: unknown): { error: Error; uid: stri
   return { error: normalized, uid: uid === "<unknown>" ? "" : uid };
 }
 
-export function captureCanvasProgress(
-  options: { acceptEmptyChanges?: boolean } = {}
-): unknown[] {
-  let current: unknown[];
-  try {
-    current = compactCanvasStates(captureMountedCanvasStates());
-  } catch (error) {
-    pendingCanvasCaptureError = normalizedCanvasCaptureError(error);
-    throw pendingCanvasCaptureError.error;
-  }
-  if (
-    pendingCanvasCaptureError?.uid
-    && current.some(state => getCanvasStateUid(state) === pendingCanvasCaptureError?.uid)
-  ) {
-    // The previously failing Canvas was captured successfully again (normally
-    // after the learner cleared or shortened it), so submission may proceed.
-    pendingCanvasCaptureError = null;
-  }
-  accumulatedCanvasStates = mergeCanvasStates(accumulatedCanvasStates, current, options);
-  return accumulatedCanvasStates;
+function hasCanvasLiveApi(api: CanvasFreezeApi): api is CanvasFreezeApi & CanvasLiveStateApi {
+  return typeof api.listCanvasLiveStateRevisions === "function"
+    && typeof api.exportCanvasLiveStateByUID === "function";
 }
 
-function captureCanvas(): unknown[] {
-  const states = captureCanvasProgress();
-  if (pendingCanvasCaptureError) throw pendingCanvasCaptureError.error;
-  return states;
+function rememberCanvasProgress(
+  binding: CanvasRuntimeBinding,
+  uid: string,
+  state: unknown,
+  pairs: ReadonlyMap<string, Element>,
+): void {
+  const pair = pairs.get(uid);
+  const previous = canvasProgressByUID.get(uid);
+  canvasProgressByUID.set(uid, {
+    uid, state, api: binding.api, runtimeDocument: binding.runtimeDocument,
+    defaultPenColor: pair ? canvasDefaultPenColor(pair) : previous?.defaultPenColor ?? "",
+  });
+  canvasCaptureErrors.get(binding.api)?.delete(uid);
+}
+
+function captureMountedCanvasStates(options: CanvasCaptureOptions, final = false): void {
+  let firstError: unknown;
+  for (const binding of canvasRuntimeBindings()) {
+    const { api, runtimeDocument } = binding;
+    try {
+      if (hasCanvasLiveApi(api)) {
+        let cache = liveCanvasCaches.get(api);
+        if (!cache) liveCanvasCaches.set(api, cache = new CanvasLiveStateCache());
+        // The activity query also covers a pointer held still, drawing begun
+        // before our listeners were installed, and programmatic operations.
+        const readableApi: CanvasLiveStateApi = {
+          listCanvasLiveStateRevisions: root => api.listCanvasLiveStateRevisions(root),
+          exportCanvasLiveStateByUID: uid => final || !api.getCanvasLiveActivityByUID?.(uid)?.active
+            ? api.exportCanvasLiveStateByUID(uid) : null,
+        };
+        let pairs: Map<string, Element> | undefined;
+        const remember = (changed: ReturnType<CanvasLiveStateCache["capture"]>): void => {
+          if (!changed.length) return;
+          if (!pairs) {
+            try { pairs = canvasPairsByUid(binding); }
+            catch { pairs = new Map(); }
+          }
+          for (const captured of changed) {
+            rememberCanvasProgress(binding, captured.uid, captured.state, pairs);
+          }
+        };
+        // Commit each successful batch before the next one can fail. No DOM
+        // geometry reads, projection, theme walk or packing per drawing item.
+        if (final) remember(cache.refreshKnown(api));
+        remember(cache.capture(readableApi, runtimeDocument, options.dirtyUIDs));
+        continue;
+      }
+
+      if (typeof api.getCanvasStoreEntry !== "function") continue;
+      let cache = legacyCanvasCaches.get(api);
+      if (!cache) legacyCanvasCaches.set(api, cache = new Map());
+      const pairs = canvasPairsByUid(binding);
+      const uids = new Set([...pairs.keys(), ...options.dirtyUIDs ?? [], ...(final ? cache.keys() : [])]);
+      for (const uid of uids) {
+        // A legacy getter may deliberately hide a mounted OCR review. Keep
+        // its UID so final capture can retry after that slide is unmounted.
+        if (!cache.has(uid)) cache.set(uid, { source: null, state: null });
+        try {
+          const source = api.getCanvasStoreEntry(uid);
+          if (!source || typeof source !== "object") continue;
+          const previous = cache.get(uid);
+          if (!final && previous?.source === source && !options.dirtyUIDs?.has(uid)) continue;
+          // Older Canvas releases expose mutable Store arrays. Detach a changed
+          // canvas, but leave geometry projection and compression for submission.
+          const entry = source as Record<string, unknown>;
+          const state = structuredClone({
+            VIEW: entry.VIEW, ITEMS: entry.ITEMS, REDO: entry.REDO,
+            bgMode: entry.bgMode, bgStep: entry.bgStep,
+            wrapW: entry.wrapW, canvasH: entry.canvasH,
+            ...(entry.calculationReviewFreeze ? { calculationReviewFreeze: entry.calculationReviewFreeze } : {}),
+          });
+          // A mount can transiently expose an empty old Store. Only an observed
+          // edit or final capture makes that legacy empty state authoritative.
+          const previousEntry = previous?.state as { ITEMS?: unknown[] } | undefined;
+          if (!final && !options.acceptEmptyChanges && !options.acceptEmptyUIDs?.has(uid)
+            && previousEntry?.ITEMS?.length && Array.isArray(state.ITEMS) && !state.ITEMS.length) continue;
+          cache.set(uid, { source, state });
+          rememberCanvasProgress(binding, uid, state, pairs);
+        } catch (error) {
+          throw new Error(`Canvas "${uid}": ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } catch (error) {
+      const failure = normalizedCanvasCaptureError(error);
+      let errors = canvasCaptureErrors.get(api);
+      if (!errors) canvasCaptureErrors.set(api, errors = new Map());
+      errors.set(failure.uid, failure.error);
+      firstError ??= failure.error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
+export function captureCanvasProgress(options: CanvasCaptureOptions = {}): unknown[] {
+  captureMountedCanvasStates(options);
+  // These are immutable/live or detached/legacy Store states, not URL payloads.
+  // Unchanged canvases retain the exact same state object across captures.
+  return Array.from(canvasProgressByUID.values(), captured => captured.state);
+}
+
+// Preserve the current slide before asynchronous Send grading navigates away.
+export function prepareCanvasSubmission(): void {
+  captureMountedCanvasStates({}, true);
+  for (const errors of canvasCaptureErrors.values()) {
+    for (const error of errors.values()) throw error;
+  }
+}
+
+export function captureCanvasForSubmission(): unknown[] {
+  // This synchronous pass reads the actual current revisions, independent of
+  // any pending debounce or canvas-change event, including unmounted UIDs.
+  prepareCanvasSubmission();
+  const current: unknown[] = [];
+  const missingLegacyUIDs = new Set<string>();
+  for (const captured of canvasProgressByUID.values()) {
+    // cvl1 carries theme-independent geometry. The former raster export
+    // supplied the current grid/selection accent; read that style only here.
+    let accentColor: string | undefined;
+    try {
+      const doc = captured.runtimeDocument;
+      const style = doc.defaultView?.getComputedStyle(doc.documentElement);
+      accentColor = style?.getPropertyValue("--canvas-accent").trim()
+        || style?.getPropertyValue("--canvas-border").trim() || "#000";
+    } catch { /* use the established geometry fallback for a retired runtime */ }
+    const full = buildFullCanvasFreezeState(null, captured.uid, captured.state, { accentColor });
+    if (!full || typeof full !== "object") {
+      if (!hasCanvasLiveApi(captured.api) && captured.api.exportAllCanvasFreezeStatesFromRoot) {
+        missingLegacyUIDs.add(captured.uid);
+        continue;
+      }
+      throw new Error(`Canvas "${captured.uid}": State cannot be represented safely for submission.`);
+    }
+    const entry = captured.state as Record<string, unknown>;
+    const state = entry.calculationReviewFreeze
+      ? { ...full, cr: entry.calculationReviewFreeze }
+      : full;
+    current.push(withCanvasThemeSemantic(state, undefined, captured.defaultPenColor));
+  }
+
+  // Export-only releases have no data-only progress API. Retain their original
+  // exporter at the explicit submission boundary, never in automatic saves.
+  // Also covers legacy review canvases whose public Store getter returns null.
+  for (const binding of canvasRuntimeBindings()) {
+    if (hasCanvasLiveApi(binding.api) || !binding.api.exportAllCanvasFreezeStatesFromRoot) continue;
+    const pairs = canvasPairsByUid(binding);
+    const exported = binding.api.exportAllCanvasFreezeStatesFromRoot(binding.runtimeDocument);
+    for (const rawState of Array.isArray(exported) ? exported : []) {
+      const uid = getCanvasStateUid(rawState);
+      missingLegacyUIDs.delete(uid);
+      const pair = pairs.get(uid);
+      const state = withCanvasThemeSemantic(withFullCanvasGeometry(rawState, pair, binding.api), pair);
+      const index = current.findIndex(value => getCanvasStateUid(value) === uid);
+      if (index >= 0) current[index] = state;
+      else current.push(state);
+    }
+  }
+  if (missingLegacyUIDs.size) {
+    throw new Error(`Canvas "${missingLegacyUIDs.values().next().value}": Legacy state could not be exported.`);
+  }
+  accumulatedCanvasStates = mergeCanvasStates(
+    accumulatedCanvasStates, compactCanvasStates(current), { acceptEmptyChanges: true },
+  );
+  return accumulatedCanvasStates;
 }
 
 const annotationFallbackApis = new WeakMap<Window, AnnotationFreezeApi>();
@@ -857,7 +1001,7 @@ export async function captureSnapshot(
   options: { nativeDom?: NativeDomFallbackV1 } = {}
 ): Promise<SnapshotPayload> {
   const native = await pullNativeState();
-  const canvas  = captureCanvas();
+  const canvas  = captureCanvasForSubmission();
   const marker  = captureMarker();
   const ortho   = captureOrtho();
   const mathe   = captureMathe();

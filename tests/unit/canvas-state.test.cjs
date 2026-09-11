@@ -565,3 +565,106 @@ test('falls back transactionally for malformed or future Canvas Store entries', 
     canvasH: 425,
   }), null);
 });
+
+
+test('live cache exports only changed revisions and retains detached states across unmounts', async () => {
+  const { CanvasLiveStateCache } = await canvasPromise;
+  const cache = new CanvasLiveStateCache();
+  const states = new Map([
+    ['1_0', { uid: '1_0', revision: 1, state: rawState({ u: '1_0' }) }],
+    ['1_1', { uid: '1_1', revision: 5, state: rawState({ u: '1_1' }) }],
+  ]);
+  let listed = [...states.values()];
+  const reads = [];
+  const root = {};
+  const api = {
+    listCanvasLiveStateRevisions(scope) { assert.equal(scope, root); return listed; },
+    exportCanvasLiveStateByUID(uid) { reads.push(uid); return states.get(uid) || null; },
+  };
+  assert.equal(cache.capture(api, root).length, 2);
+  const first = [...cache.entries()];
+  reads.length = 0;
+  assert.deepEqual(cache.capture(api, root), []);
+  assert.deepEqual(reads, []);
+  assert.strictEqual([...cache.entries()][0], first[0]);
+  states.set('1_1', { uid: '1_1', revision: 6, state: rawState({ u: '1_1', e: 1 }) });
+  listed = [...states.values()];
+  assert.equal(cache.capture(api, root).length, 1);
+  assert.deepEqual(reads, ['1_1']);
+  assert.strictEqual([...cache.entries()][0], first[0]);
+  assert.equal([...cache.entries()][1].state.e, 1, 'clear is a real revision');
+  listed = [];
+  assert.deepEqual(cache.capture(api, root), []);
+  assert.equal([...cache.entries()].length, 2, 'unmount never erases a saved canvas');
+});
+
+test('live cache retries null exports and records the export revision, not stale metadata', async () => {
+  const { CanvasLiveStateCache } = await canvasPromise;
+  const cache = new CanvasLiveStateCache();
+  let exported = null;
+  const api = {
+    listCanvasLiveStateRevisions: () => [{ uid: '1_0', revision: 2 }],
+    exportCanvasLiveStateByUID: () => exported,
+  };
+  assert.deepEqual(cache.capture(api, {}), []);
+  exported = { uid: '1_0', revision: 3, state: rawState({ u: '1_0' }) };
+  assert.equal(cache.capture(api, {}).length, 1);
+  assert.equal([...cache.entries()][0].revision, 3);
+  exported = { uid: '1_0', revision: 4, state: rawState({ u: '1_0', e: 1 }) };
+  assert.equal(cache.refreshKnown(api).length, 1, 'final refresh catches a lost change event');
+  exported = null;
+  assert.deepEqual(cache.refreshKnown(api), []);
+  assert.equal([...cache.entries()][0].revision, 4);
+});
+
+test('live cache rejects mismatched exports without replacing prior progress', async () => {
+  const { CanvasLiveStateCache } = await canvasPromise;
+  const cache = new CanvasLiveStateCache();
+  let exported = { uid: '1_0', revision: 1, state: rawState({ u: '1_0' }) };
+  const api = {
+    listCanvasLiveStateRevisions: () => [{ uid: '1_0', revision: exported.revision }],
+    exportCanvasLiveStateByUID: () => exported,
+  };
+  cache.capture(api, {});
+  exported = { uid: 'wrong', revision: 2, state: {} };
+  assert.throws(() => cache.capture(api, {}), /Invalid live state/);
+  assert.equal([...cache.entries()][0].revision, 1);
+});
+
+test('live cache commits a revision batch only after all canvas exports succeed', async () => {
+  const { CanvasLiveStateCache } = await canvasPromise;
+  for (const method of ['capture', 'refreshKnown']) {
+    const cache = new CanvasLiveStateCache();
+    const states = new Map([
+      ['1_0', { uid: '1_0', revision: 1, state: rawState({ u: '1_0' }) }],
+      ['1_1', { uid: '1_1', revision: 1, state: rawState({ u: '1_1' }) }],
+    ]);
+    let failSecond = false;
+    const reads = [];
+    const api = {
+      listCanvasLiveStateRevisions: () => [...states.values()],
+      exportCanvasLiveStateByUID(uid) {
+        reads.push(uid);
+        if (failSecond && uid === '1_1') throw new Error('second canvas temporarily unavailable');
+        return states.get(uid);
+      },
+    };
+    cache.capture(api, {});
+    const previous = [...cache.entries()];
+    states.set('1_0', { uid: '1_0', revision: 2, state: rawState({ u: '1_0', e: 1 }) });
+    states.set('1_1', { uid: '1_1', revision: 2, state: rawState({ u: '1_1', e: 1 }) });
+    failSecond = true;
+    assert.throws(() => cache[method](api, {}), /temporarily unavailable/);
+    assert.strictEqual([...cache.entries()][0], previous[0], method + ' must not acknowledge the first revision early');
+    assert.strictEqual([...cache.entries()][1], previous[1]);
+    failSecond = false;
+    reads.length = 0;
+    const retry = cache[method](api, {});
+    assert.deepEqual(reads, ['1_0', '1_1'], method + ' must retry both changed canvases');
+    assert.deepEqual(retry.map(item => [item.uid, item.revision]), [['1_0', 2], ['1_1', 2]]);
+    const repeated = cache[method](api, {});
+    if (method === 'capture') assert.deepEqual(repeated, []);
+    else repeated.forEach((item, index) => assert.strictEqual(item, retry[index],
+      'the final refresh reuses verified, unchanged snapshots'));
+  }
+});
