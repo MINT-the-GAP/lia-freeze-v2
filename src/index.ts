@@ -40,6 +40,7 @@ import {
   buildLink,
   loadPayload,
   getCurrentHash,
+  normalizeViewerNavigationUrl,
 } from "./url";
 import {
   injectRuntimeCSS,
@@ -1240,14 +1241,21 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
   // Restore native quiz state via port
   restoreSnapshot(payload);
 
-  // Determine where to navigate: prefer eval slide on shared links
+  // A numeric viewer hash is an explicit saved slide position. Preserve it
+  // when opening a shared link directly; only links without a valid position
+  // fall back to the submission slide.
   const ev = getEvalSlide();
-  // Navigate to a real LiaScript slide (abgabe or last known), then overlay the eval card.
-  // The eval hash is virtual and unknown to LiaScript, so we never set it directly.
-  const targetHash = abgabeHash || payload.sh || "#1";
+  const requestedHash = /^#\d+$/.test(window.location.hash)
+    ? window.location.hash
+    : "";
+  const targetHash = declaredSlides.some(slide =>
+    slide.h === requestedHash && !slide.vt
+  )
+    ? requestedHash
+    : (abgabeHash || payload.sh || "#1");
   if (getCurrentHash() !== targetHash) window.location.hash = targetHash;
   scheduleNativeDomRestore(targetHash);
-  if (ev) setTimeout(() => showEvalPlaceholder(), 300);
+  if (ev && targetHash === abgabeHash) setTimeout(() => showEvalPlaceholder(), 300);
 
   refreshFreezeBar();
 
@@ -2149,6 +2157,7 @@ async function init(): Promise<void> {
     captureAnnotationProgressBestEffort();
     captureCoordinateProgress();
     captureNativeDomNow(getCurrentHash());
+    args[2] = normalizeViewerNavigationUrl(args[2]);
     const r = _push(...args); onHashChange(); return r;
   };
   history.replaceState = function (...args) {
@@ -2156,6 +2165,7 @@ async function init(): Promise<void> {
     captureAnnotationProgressBestEffort();
     captureCoordinateProgress();
     captureNativeDomNow(getCurrentHash());
+    args[2] = normalizeViewerNavigationUrl(args[2]);
     const r = _replace(...args); onHashChange(); return r;
   };
 

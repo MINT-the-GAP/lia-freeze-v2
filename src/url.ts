@@ -95,6 +95,37 @@ export function getCurrentHash(): string {
   return /^#\d+$/.test(clean) ? clean : "#1";
 }
 
+/**
+ * LiaScript's native arrows sometimes build their next URL by appending #8 to
+ * the decoded course URL. For a shared link that course URL ends in
+ * #submission=TOKEN, so the browser receives #submission=TOKEN#8 and the
+ * viewer falls back to its title slide. Keep the original encoded course URL
+ * (and its fragment-only token) in the query, with only #8 as viewer hash.
+ */
+export function normalizeViewerNavigationUrl<T extends string | URL | null | undefined>(url: T): T | string {
+  if (url == null) return url;
+  const token = tokenFromCourseUrl();
+  if (!token) return url;
+
+  let target: URL;
+  try {
+    target = new URL(String(url), window.location.href);
+  } catch {
+    return url;
+  }
+  if (target.origin !== window.location.origin || target.pathname !== window.location.pathname)
+    return url;
+
+  const match = target.hash.match(/^#submission=([^#]+)#(\d+)$/);
+  if (!match) return url;
+  try {
+    if (decodeURIComponent(match[1]) !== token) return url;
+  } catch {
+    return url;
+  }
+  return window.location.href.split("#")[0] + "#" + match[2];
+}
+
 export async function buildLink(payload: unknown & { sh?: string }): Promise<string> {
   const baseCourseUrl = stripSubmission(getCourseUrl());
   if (!baseCourseUrl) return window.location.href;

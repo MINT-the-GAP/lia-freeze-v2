@@ -543,9 +543,31 @@ function eligibleControls(root: Element): Element[] {
   );
 }
 
-function readControls(root: Element): NativeDomControlState[] {
+// LiaScript renders ordinary inline [[answer]] inputs beside the .lia-quiz
+// controls. In a flex section with several quizzes there is no ancestor that
+// owns only one quiz, so the DOM scope alone cannot identify each input.
+// LiaScript's own oninput track identifies the quiz index within this slide.
+function nativeInlineInputs(host: Element, quizIndex: number): Element[] {
+  return Array.from(host.querySelectorAll("input.lia-quiz__input,textarea.lia-quiz__input"))
+    .filter(element => {
+      if (element.closest(IGNORED_SELECTOR)) return false;
+      const handler = element.getAttribute("oninput") || "";
+      const match = handler.match(/\["input",\s*(\d+)\]/);
+      return match !== null && Number(match[1]) === quizIndex;
+    });
+}
+
+function taskControls(root: Element, extras: Element[]): Element[] {
+  const controls = eligibleControls(root);
+  for (const element of extras) {
+    if (!controls.includes(element)) controls.push(element);
+  }
+  return controls;
+}
+
+function readControls(root: Element, extras: Element[] = []): NativeDomControlState[] {
   const controls: NativeDomControlState[] = [];
-  const elements = eligibleControls(root);
+  const elements = taskControls(root, extras);
   elements.forEach((element, index) => {
     const type = controlType(element);
     if (!type) return;
@@ -640,7 +662,8 @@ function readTask(
       ? diktatRoot
       : kind === "marker" && markerRoot
         ? markerRoot
-        : taskScope
+        : taskScope,
+    table === "quiz" ? nativeInlineInputs(host, quizIndex) : []
   );
   const selection = kind === "selection" ? readSelection(taskScope) : undefined;
   const tiles = kind === "tile" && tileRoot ? readTiles(tileRoot) : undefined;
@@ -976,8 +999,12 @@ function findControl(
   return controls.find(control => controlType(control) === state.type);
 }
 
-function restoreControls(root: Element, states: NativeDomControlState[]): void {
-  const controls = eligibleControls(root);
+function restoreControls(
+  root: Element,
+  states: NativeDomControlState[],
+  extras: Element[] = []
+): void {
+  const controls = taskControls(root, extras);
   states.forEach(state => {
     const element = findControl(controls, state);
     if (!element) return;
@@ -1367,7 +1394,11 @@ export function restoreNativeDomForSlide(
       : task.kind === "marker"
         ? findMarkerTaskRoot(quizRoot, root) ?? quizRoot
         : taskScope;
-    restoreControls(controlRoot, task.controls);
+    restoreControls(
+      controlRoot,
+      task.controls,
+      task.table === "quiz" ? nativeInlineInputs(root, task.nativeIndex) : []
+    );
     restoreSelection(taskScope, task.selection);
     restoreTiles(quizRoot, root, task.tiles);
     restoreOrthography(quizRoot, root, task.orthography);

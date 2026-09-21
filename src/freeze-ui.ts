@@ -212,6 +212,10 @@ body.lia-course-frozen .lia-frozen-note { display: block; }
 body.lia-snapshot-mode #lia-freeze-bar,
 body.lia-course-frozen #lia-freeze-bar { display: block; }
 
+/* The viewer TOC is an interactive sidebar. Keep it above the evaluation
+   card, which overlaps the sidebar edge at presentation widths. */
+body.lia-shared-freeze-link #lia-toc { z-index: 9001; }
+
 #lia-freeze-bar-inner {
   display: grid;
   grid-template-columns: auto 1fr auto;
