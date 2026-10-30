@@ -16,6 +16,7 @@ import {
   setAssignmentDetailSendStatus,
 } from './adetails-dom';
 import { installPortIntercept } from "./port";
+import { installLearningStateReader, resolveLearningCourseVersion } from './learning-state';
 import { createCanvasProgressScheduler } from "./canvas-progress";
 import {
   activateAnnotationSnapshot,
@@ -2195,6 +2196,27 @@ function safeBoot(): void {
 }
 
 if (claimFreezeBoot(freezeLifecycle)) {
+  installLearningStateReader(window, () => {
+    let courseUrl = '';
+    try {
+      const url = new URL(decodeURIComponent(window.location.search.slice(1)), window.location.href);
+      url.hash = '';
+      courseUrl = url.toString();
+    } catch { /* unavailable source identity is rejected by consumers */ }
+    return {
+      ready: booted && (courseMarkdownLoaded || !!activePayload),
+      grading: gradingSendSubmission,
+      deferFeedback: evalOptions.deferFeedback,
+      courseUrl,
+      courseVersion: resolveLearningCourseVersion(
+        !!activePayload,
+        readSubmissionDocumentMetadata(activePayload?.doc)?.courseVersion,
+        courseDocumentIdentity.courseVersion,
+      ),
+      payload: activePayload,
+      manualAwards: getManualAwardValues(),
+    };
+  });
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", safeBoot, { once: true });
   } else {

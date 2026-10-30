@@ -4,9 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
-const expectedVersion = '1.0.0';
+const expectedVersion = '1.0.2';
 
-test('keeps every project release version explicitly pinned to 1.0.0', () => {
+test('keeps every project release version explicitly pinned to 1.0.2', () => {
   const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(readFileSync(path.join(repoRoot, 'package-lock.json'), 'utf8'));
   const readme = readFileSync(path.join(repoRoot, 'README.md'), 'utf8');

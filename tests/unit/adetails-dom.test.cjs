@@ -23,6 +23,80 @@ const adetailsDomPromise = loadTypeScriptModule(
   path.join(repoRoot, 'src', 'adetails-dom.ts')
 );
 
+function renderADetailsMacro(arguments_) {
+  const readme = readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  const macro = readme.match(/^@ADetails\r?\n<script[^>]*>\r?\n([\s\S]*?)\r?\n<\/script>\r?\n@end/m);
+  assert.ok(macro, 'ADetails is a self-contained script macro');
+  const script = macro[1].replace(/@'(\d+)/g, (_match, position) => {
+    // Parser.elm leaves an unbound escaped positional macro intact.
+    const value = arguments_[Number(position)] ?? "@'" + position;
+    return JSON.stringify(value).slice(1, -1);
+  });
+  const { document } = parseHTML('<html><body></body></html>');
+  const output = [];
+  new Function('document', 'send', script)(document, { lia: value => output.push(value) });
+  assert.equal(output.length, 1);
+  assert.ok(output[0].startsWith('HTML: '));
+  const rendered = parseHTML('<html><body>' + output[0].slice(6) + '</body></html>');
+  return rendered.document;
+}
+
+test('ADetails macro preserves comma arguments, decimal commas, and quoted metadata', async () => {
+  const { parseAssignmentDetails } = await adetailsDomPromise;
+  const metadata = '1,5=BE; Tags: Bruchrechnung, Einheiten';
+  for (const arguments_ of [
+    ['1', '5=BE; Tags: Bruchrechnung', ' Einheiten'],
+    [metadata],
+  ]) {
+    const document = renderADetailsMacro(arguments_);
+    const marker = document.querySelector('lia-adetails');
+    assert.ok(marker);
+    assert.equal(marker.getAttribute('data-adetails'), metadata);
+    assert.match(marker.getAttribute('data-adetails-instance'),
+      /^lia-adetails-[a-f0-9]{1,8}(?:-[a-f0-9]{1,8}){3}$/);
+    assert.deepEqual(parseAssignmentDetails(marker.getAttribute('data-adetails')).tags,
+      ['Bruchrechnung', 'Einheiten']);
+    assert.equal(parseAssignmentDetails(marker.getAttribute('data-adetails')).pointsValue, 1.5);
+  }
+  const special = '0=BE; Tags: "Zitat", A&B, <img src=x>, C:\\Thema';
+  const document = renderADetailsMacro([special]);
+  assert.equal(document.querySelector('lia-adetails').getAttribute('data-adetails'), special);
+  assert.equal(document.querySelector('img'), null);
+  assert.equal(parseAssignmentDetails(special).pointsValue, 0);
+});
+
+test('ADetails macro generates distinct instance tokens without relying on nested uid expansion', () => {
+  const first = renderADetailsMacro(['1;Topic']).querySelector('lia-adetails');
+  const second = renderADetailsMacro(['1;Topic']).querySelector('lia-adetails');
+  assert.notEqual(first.getAttribute('data-adetails-instance'),
+    second.getAttribute('data-adetails-instance'));
+  assert.doesNotMatch(first.getAttribute('data-adetails-instance'), /uid/);
+});
+
+test('ADetails macro reports argument overflow instead of emitting incomplete metadata', () => {
+  const arguments_ = Array.from({ length: 33 }, (_unused, index) =>
+    index === 0 ? '2; Topic0' : 'Topic' + index);
+  const document = renderADetailsMacro(arguments_);
+  assert.equal(document.querySelector('lia-adetails'), null);
+  assert.match(document.querySelector('[role=alert]').textContent, /Zu viele Metadatenargumente/);
+  assert.match(document.querySelector('[role=alert]').textContent, /Backticks/);
+  const complete = renderADetailsMacro([arguments_.join(',')]);
+  assert.equal(complete.querySelector('lia-adetails').getAttribute('data-adetails'),
+    arguments_.join(','));
+});
+
+test('ADetails macro accepts every supported argument position and trims only missing slots', () => {
+  const arguments_ = Array.from({ length: 32 }, (_unused, index) =>
+    index === 0 ? '2; Topic0' : 'Topic' + index);
+  const document = renderADetailsMacro(arguments_);
+  assert.equal(document.querySelector('lia-adetails').getAttribute('data-adetails'),
+    arguments_.join(','));
+  const empty = renderADetailsMacro([]);
+  assert.equal(empty.querySelector('lia-adetails').getAttribute('data-adetails'), '');
+  const literal = renderADetailsMacro(['2; Topic', '@32']);
+  assert.equal(literal.querySelector('lia-adetails').getAttribute('data-adetails'), '2; Topic,@32');
+});
+
 function fixture(markup, bodyClass = '') {
   const { document, window } = parseHTML(
     `<html><body class=${bodyClass}><main id=content>${markup}</main></body></html>`

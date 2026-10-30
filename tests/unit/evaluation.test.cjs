@@ -243,6 +243,41 @@ test('detects all six baseline inputs and their ADetails weights', async () => {
   }
 });
 
+test('preserves complete backtick-quoted ADetails metadata in frozen declarations', async () => {
+  const {
+    buildFrozenEvaluationMetadata,
+    parseEvaluationDeclarations,
+    parseDeclaredSlides,
+  } = await evaluationPromise;
+  const { encodeToken, decodeToken } = await codecPromise;
+  const markdown = [
+    '# Course',
+    '## Tasks',
+    'First: [[alpha]]',
+    '@ADetails(2=BE;Bruchrechnung, Einheiten)',
+    'Second: [[beta]]',
+    '@ADetails(`points=1|2;tags=Einheiten, Bruchrechnung`)',
+    'Third: [[gamma]]',
+    '@ADetails(`1,5=BE;Transfer, Begriff (Teil 1)`)',
+    'Fourth: [[delta]]',
+    '@ADetails(``0=BE;Null, Literal `Tick` ``)',
+  ].join('\n');
+  const declarations = parseEvaluationDeclarations(markdown);
+  const expected = [
+    { be: 2, tg: ['Bruchrechnung', 'Einheiten'], table: 'quiz' },
+    { be: 3, tg: ['Einheiten', 'Bruchrechnung'], table: 'quiz' },
+    { be: 1.5, tg: ['Transfer', 'Begriff (Teil 1)'], table: 'quiz' },
+    { be: 0, tg: ['Null', 'Literal `Tick`'], table: 'quiz' },
+  ];
+  assert.deepEqual(declarations['#2'].tl, expected);
+  const frozen = buildFrozenEvaluationMetadata(declarations, parseDeclaredSlides(markdown), '', {
+    trackF12: false, trackTab: false, trackTime: false, deferFeedback: true,
+  }, 2);
+  const encoded = await encodeToken({ ev: frozen });
+  const restored = await decodeToken(encoded.token);
+  assert.deepEqual(restored.ev.declarations['#2'].tl, expected);
+});
+
 test('detects the official unindented Single-Choice syntax', async () => {
   const { parseEvaluationDeclarations } = await evaluationPromise;
   const markdown = [

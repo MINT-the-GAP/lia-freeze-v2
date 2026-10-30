@@ -1,6 +1,6 @@
 <!--
 author:   MINT-the-GAP, Martin Lommatzsch, Jihad Hyadi
-version:  1.0.0
+version:  1.0.2
 language: en
 narrator: US English Female
 edit: true
@@ -68,10 +68,24 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 <div data-snapshot-eval="1" style="display:none;"></div>
 @end
 
-@ADetails: @ADetails_(@uid,`@0`)
-
-@ADetails_
-<lia-adetails class="lia-assignment-details" data-adetails-instance="lia-adetails-@0" data-adetails="@1"></lia-adetails>
+@ADetails
+<script modify="false" run-once style="display:inline-block">
+const args = ["@'0", "@'1", "@'2", "@'3", "@'4", "@'5", "@'6", "@'7", "@'8", "@'9", "@'10", "@'11", "@'12", "@'13", "@'14", "@'15", "@'16", "@'17", "@'18", "@'19", "@'20", "@'21", "@'22", "@'23", "@'24", "@'25", "@'26", "@'27", "@'28", "@'29", "@'30", "@'31"];
+const overflow = "@'32";
+const missingArgument = index => "@" + "'" + String(index);
+while (args.length && args[args.length - 1] === missingArgument(args.length - 1)) args.pop();
+if (overflow !== missingArgument(32)) {
+  send.lia("HTML: <span role='alert'>Zu viele Metadatenargumente. Bitte die vollständige Angabe in Backticks setzen.</span>");
+} else {
+  const marker = document.createElement("lia-adetails");
+  marker.className = "lia-assignment-details";
+  const instance = Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join("-");
+  marker.setAttribute("data-adetails-instance", "lia-adetails-" + instance);
+  marker.setAttribute("data-adetails", args.join(","));
+  send.lia("HTML: " + marker.outerHTML);
+}
+"LIA: stop"
+</script>
 @end
 
 @Exam
@@ -245,16 +259,60 @@ Used by `@Auswertung` to compute the total score.
 @ADetails(2;Grammar,Spelling)
 ```
 
-- First argument: point value (default: 1)
-- Optional second argument: comma-separated topic tags
+- The specification starts with the point value (the evaluation defaults to 1
+  if no valid point value is declared).
+- After a semicolon, add optional comma-separated topic tags.
+- Decimal values, `0=BE`, `points=`, `be=`, and partial values separated by `|`
+  retain their existing meaning.
+
+LiaScript treats unquoted commas as macro argument separators. This macro
+reassembles up to 32 positional arguments so the complete tag list and decimal
+commas survive expansion. For longer lists, or to keep the specification in one
+argument, put the entire specification in backticks:
+
+``` markdown
+@ADetails(`1,5=BE;Grammar,Spelling,Transfer`)
+```
+
+An unquoted 33rd argument produces a visible instruction to use backticks instead
+of emitting incomplete metadata. The 32-argument limit does not restrict commas
+inside one backtick-quoted argument.
+
+**MathPath integration.** MathPath 0.0.13 and Freeze 1.0.2 intentionally
+define the same public `@ADetails` macro. With these or compatible newer templates imported,
+either import order emits the same metadata host. MathPath yields its points
+display to the loaded Freeze runtime, while continuing to read the metadata for
+`@Explain`. Use at least MathPath 0.0.13 and Freeze 1.0.2. Earlier
+competing macro definitions may still discard additional comma-separated
+tags, depending on which import definition is selected.
+
+The older `Aufgabensammlung/imports/FreezeREADME.md` and `Freeze.js` integration
+is recognized so MathPath yields its display. Use a backtick-quoted complete
+specification there to preserve all tags. That legacy renderer inserts its own
+badge into native quiz controls; the DOM-ownership guarantee below applies to
+the current Freeze implementation, not to the legacy renderer.
+
+**Read-only learning-state integration (since 1.0.2).**
+
+Optional recommendation extensions can call
+`window.__liaFreezeLearningStateV1__.read()`. The version-1 result contains
+`courseUrl`, `courseVersion` and `phase` (`unavailable`, `live`, `collect`,
+`grading`, or `review`). Only `review` includes detached native quiz/survey
+results, evaluation-only fallback results and current manual point corrections.
+The bridge never grades, captures, restores, creates a submission or registers
+additional quiz listeners. Initialization and deferred Send phases expose no
+results. Consumers must validate course identity and phase; older Freeze
+versions do not provide this cross-slide correction interface.
 
 **DOM ownership and the internal ADetails host.**
 
 LiaScript/Elm owns the light-DOM children of `.lia-quiz`, including the complete
 `.lia-quiz__control` row. ADetails badges, Send statuses and restored-feedback
-fallbacks never insert, move or replace nodes in that tree. `@ADetails` expands
-to a declarative `<lia-adetails>` sibling immediately after its quiz. LiaScript's
-`@uid` supplies a unique declarative instance token; legacy
+fallbacks never insert, move or replace nodes in that tree. `@ADetails` renders
+a declarative `<lia-adetails>` host through a LiaScript script's HTML output
+immediately after its quiz. Attributes are assigned through the DOM API, so quotes
+and HTML-like tag labels remain metadata. The macro assigns each rendered host
+an instance token from four cryptographically random 32-bit values; legacy
 `.lia-assignment-details` spans are upgraded in place and receive a deterministic
 slide/marker fallback ID. Freeze adds no light-DOM children to the host; an empty
 Elm-owned placeholder text node emitted by LiaScript remains untouched.

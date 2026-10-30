@@ -448,7 +448,8 @@ export function buildFrozenEvaluationMetadata(
 }
 
 function parseAssignmentDetails(raw: string): { pointsValue: number | null; tags: string[] } {
-  const txt = normalizeSpace(raw);
+  // Backticks protect a complete authored macro argument; they are not tags.
+  const txt = normalizeSpace(raw).replace(/^(`+)([\s\S]*)\1$/, "$2");
   let pointsValue: number | null = null;
   const tags: string[] = [];
 
@@ -565,7 +566,8 @@ function collectTasksFromSlideLines(lines: string[]): DeclaredTask[] {
     if (!trimmed || /^\s*<!--/.test(trimmed)) continue;
 
     // @ADetails — annotate last task
-    const detailMatches = Array.from(line.matchAll(/@ADetails\s*\(([^)]*)\)/g));
+    // A complete backtick-quoted argument may itself contain parentheses.
+    const detailMatches = Array.from(line.matchAll(/@ADetails\s*\(\s*((`+)[\s\S]*?\2|[^)]*)\s*\)/g));
     if (detailMatches.length) {
       const last = tasks.length ? tasks[tasks.length - 1] : null;
       detailMatches.forEach(m => mergeMeta(last, m[1] || ""));
