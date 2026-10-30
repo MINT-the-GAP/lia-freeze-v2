@@ -64,9 +64,7 @@ import: https://raw.githubusercontent.com/MINT-the-GAP/lia-marker/main/README.md
 @end
 
 
-@Auswertung
-<div data-snapshot-eval="1" style="display:none;"></div>
-@end
+@Auswertung:
 
 @ADetails
 <script modify="false" run-once style="display:inline-block">
@@ -163,6 +161,16 @@ section: the questionnaire is position **1 / 2**, and the evaluation is **2 / 2*
 Use **Next** or **Go to evaluation slide** to return to the evaluation. Markdown
 horizontal rules (`---`) separate content within a section; headings create
 additional LiaScript slides.
+
+`@Auswertung` intentionally has an empty inline expansion: Freeze reads its
+options directly from the authored course source. Emitting a hidden HTML block
+here triggers a LiaScript 2.5.0 parser bug that nests subsequent annotated quizzes
+inside answer labels. The empty expansion preserves `horizontal-quiz` layouts in
+both live courses and shared submissions without requiring Boardmode's live-only
+compatibility workaround. Existing submission payloads keep their answer format.
+For courses without native persisted answers (including development versions
+`0.x`), the fallback also restores standard choice and free-text values into
+LiaScript's model, so a later responsive redraw keeps the submitted answers.
 
 Optionally track cheating attempts:
 
@@ -328,8 +336,9 @@ Elm-owned placeholder text node emitted by LiaScript remains untouched.
 The points badge and teacher award input live only inside that host's Freeze-owned
 Shadow DOM. Deferred-Send status and restored-feedback fallback use the same host
 when `@ADetails` is present. A quiz without a marker uses one body-level
-`<lia-freeze-quiz-sidecars>` Shadow portal outside the Elm application tree, so it
-keeps the legacy feedback without changing quiz children. Repeated refreshes reuse
+`<lia-freeze-quiz-sidecars>` Shadow portal only for temporary Send confirmations.
+Restoring a submission never creates fixed corner cards for missing native
+feedback. Existing feedback beside a quiz remains in place. Repeated refreshes reuse
 the same hosts, a document-level observer binds quizzes that render later, and
 disconnected instances release their listeners and registry entries independently.
 Shadow content is materialized as plain text only inside the detached print/PDF
@@ -341,6 +350,12 @@ the not-yet-tagged Resetter ownership fix at commit
 
 The template header, `package.json` and lockfile intentionally share the same
 release version.
+
+The horizontal-layout regression runs against the hosted LiaScript 2.5.0 viewer
+and a pinned Boardmode revision; it requires network access and checks the runtime
+version explicitly. After building, run
+`npx playwright test tests/browser/horizontal-freeze.spec.mjs` to verify new links,
+legacy DOM-only links, native-state restoration, and late responsive redraws.
 
 ---
 

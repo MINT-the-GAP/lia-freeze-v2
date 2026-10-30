@@ -1002,23 +1002,48 @@ function findControl(
 function restoreControls(
   root: Element,
   states: NativeDomControlState[],
-  extras: Element[] = []
+  extras: Element[] = [],
+  kind?: NativeDomKind
 ): void {
   const controls = taskControls(root, extras);
-  states.forEach(state => {
+  const syncNativeModel = kind === "single" || kind === "multiple"
+    || kind === "matrix" || kind === "freeText";
+  // Clear a previous radio selection before selecting its replacement. Native
+  // radio clicks toggle an already selected option, and assigning checked=true
+  // can otherwise silently uncheck the previous DOM control before we sync it.
+  const orderedStates = syncNativeModel
+    ? [...states].sort((a, b) => Number(a.type === "radio" && a.checked === 1)
+      - Number(b.type === "radio" && b.checked === 1))
+    : states;
+  orderedStates.forEach(state => {
     const element = findControl(controls, state);
     if (!element) return;
+    let restoreEvent: "click" | "input" | null = null;
     if (
       element instanceof HTMLInputElement
       && (state.type === "checkbox" || state.type === "radio")
     ) {
-      element.checked = state.checked === 1;
+      const checked = state.checked === 1;
+      if (syncNativeModel && element.checked !== checked) restoreEvent = "click";
+      element.checked = checked;
     } else if (
       element instanceof HTMLInputElement
       || element instanceof HTMLTextAreaElement
       || element instanceof HTMLSelectElement
     ) {
-      element.value = state.value ?? "";
+      const value = state.value ?? "";
+      if (syncNativeModel && element.value !== value
+        && (state.type === "text" || state.type === "textarea")) restoreEvent = "input";
+      element.value = value;
+    }
+    // DOM-only snapshots (including version-0 courses) must update Elm's input
+    // model too, or its next resize render replaces these values with defaults.
+    // A plain Event has no native checkbox activation. Send only changed values
+    // so retries cannot toggle a checkbox twice; never invoke Check or Submit.
+    if (restoreEvent) {
+      const event = new Event(restoreEvent, { bubbles: true });
+      (event as Event & { __liaFreezeRestore?: boolean }).__liaFreezeRestore = true;
+      element.dispatchEvent(event);
     }
     addAppearance(element, state.appearance);
     if (element.matches("[data-lia-math-quiz-native],.lia-math-quiz-native")) {
@@ -1397,7 +1422,8 @@ export function restoreNativeDomForSlide(
     restoreControls(
       controlRoot,
       task.controls,
-      task.table === "quiz" ? nativeInlineInputs(root, task.nativeIndex) : []
+      task.table === "quiz" ? nativeInlineInputs(root, task.nativeIndex) : [],
+      task.kind
     );
     restoreSelection(taskScope, task.selection);
     restoreTiles(quizRoot, root, task.tiles);

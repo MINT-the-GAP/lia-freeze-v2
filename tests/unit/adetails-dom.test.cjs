@@ -252,7 +252,7 @@ test('keeps two quiz sidecars and their status or feedback isolated', async () =
   assert.equal(second.badge.textContent, '4 BE');
 });
 
-test('routes markerless quiz status and feedback through a body-level shadow portal', async () => {
+test('restored markerless feedback creates no permanent card or lasting Send portal', async () => {
   const {
     clearAssignmentDetailSendStatuses,
     disconnectAssignmentDetailObserver,
@@ -264,6 +264,23 @@ test('routes markerless quiz status and feedback through a body-level shadow por
   const { document, host } = fixture(quizMarkup('quiz-without-details'));
   const quiz = host.querySelector('#quiz-without-details');
   const quizBefore = quiz.outerHTML;
+  document.body.classList.add('lia-course-frozen', 'lia-shared-freeze-link');
+
+  // Delayed restoration repeats in shared links. None of those passes may
+  // recreate missing native feedback as a persistent corner notification.
+  const restored = {
+    text: 'Die richtige Antwort wurde noch nicht gegeben',
+    hidden: false,
+    appearance: ['text-error'],
+  };
+  for (const feedback of [restored, restored, { ...restored, hidden: true }, null]) {
+    assert.equal(setAssignmentDetailFeedback(quiz, host, feedback), true);
+    assert.equal(document.querySelector('[data-lia-freeze-quiz-sidecars]'), null);
+    assert.equal(quiz.outerHTML, quizBefore);
+  }
+  const feedbackOnlyPrintClone = host.cloneNode(true);
+  materializeAssignmentDetailSidecarsForPrint(host, feedbackOnlyPrintClone);
+  assert.equal(feedbackOnlyPrintClone.querySelector('.lia-freeze-generic-print-sidecar'), null);
 
   assert.equal(setAssignmentDetailSendStatus(quiz, host, 'Stored safely'), true);
   const portal = document.body.querySelector('[data-lia-freeze-quiz-sidecars]');
@@ -278,9 +295,9 @@ test('routes markerless quiz status and feedback through a body-level shadow por
     hidden: false,
     appearance: ['success'],
   }), true);
-  const feedback = portal.shadowRoot.querySelector('.lia-quiz__feedback');
-  assert.equal(feedback.textContent, 'Restored safely');
-  assert.equal(feedback.classList.contains('success'), true);
+  assert.equal(portal.shadowRoot.querySelector('.lia-quiz__feedback'), null);
+  assert.doesNotMatch(portal.shadowRoot.textContent || '', /Restored safely/);
+  assert.equal(portal.shadowRoot.querySelector('.lia-send-status').textContent, 'Stored safely');
   assert.equal(quiz.outerHTML, quizBefore);
 
   const printClone = host.cloneNode(true);
@@ -288,14 +305,14 @@ test('routes markerless quiz status and feedback through a body-level shadow por
   const printed = printClone.querySelector('.lia-freeze-generic-print-sidecar');
   assert.ok(printed);
   assert.match(printed.textContent, /Stored safely/);
-  assert.match(printed.textContent, /Restored safely/);
+  assert.doesNotMatch(printed.textContent, /Restored safely/);
   assert.equal(printed.closest('.lia-quiz__control'), null);
 
   clearAssignmentDetailSendStatuses(document);
-  assert.equal(portal.shadowRoot.querySelector('.lia-send-status').hidden, true);
-  assert.equal(portal.isConnected, true, 'visible feedback keeps the portal alive');
+  assert.equal(portal.isConnected, false, 'restored feedback cannot keep a dismissed Send portal alive');
+  assert.equal(setAssignmentDetailFeedback(quiz, host, restored), true);
   assert.equal(setAssignmentDetailFeedback(quiz, host, null), true);
-  assert.equal(portal.isConnected, false);
+  assert.equal(document.querySelector('[data-lia-freeze-quiz-sidecars]'), null);
 
   setAssignmentDetailSendStatus(quiz, host, 'Temporary');
   const orphanPortal = document.body.querySelector('[data-lia-freeze-quiz-sidecars]');

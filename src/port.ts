@@ -163,6 +163,8 @@ export async function loadNativeState(): Promise<{
 
 // Restore state for a section by sending a "load" reply directly to Elm.
 // window.LIA.send only forwards reply:true events, which Elm accepts as DB replies.
+// A load reply carries the saved data directly. The table/section route is in
+// track; wrapping the data in request parameters makes Elm reject the reply.
 export function sendRestoreEvent(
   table: TableName,
   sectionIndex: number,
@@ -172,7 +174,7 @@ export function sendRestoreEvent(
     reply: true,
     track: [[table, sectionIndex]],
     service: "db",
-    message: { cmd: "load", param: { table, id: sectionIndex, data } },
+    message: { cmd: "load", param: data },
   });
 }
 

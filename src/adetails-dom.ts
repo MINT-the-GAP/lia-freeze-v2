@@ -58,7 +58,6 @@ type GenericQuizSidecar = {
   contentHost: Element;
   entry: HTMLDivElement;
   status: HTMLDivElement;
-  feedback: HTMLDivElement;
 };
 
 type GenericQuizSidecarPortal = {
@@ -495,7 +494,7 @@ function cleanupGenericEntry(
   portal: GenericQuizSidecarPortal,
   state: GenericQuizSidecar
 ): void {
-  if (!state.status.hidden || !state.feedback.hidden) return;
+  if (!state.status.hidden) return;
   removeGenericEntry(portal, state);
 }
 
@@ -528,12 +527,7 @@ function ensureGenericEntry(
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   status.hidden = true;
-  const feedback = quizRoot.ownerDocument.createElement("div");
-  feedback.className = "lia-adetails-feedback lia-quiz__feedback";
-  feedback.setAttribute("role", "status");
-  feedback.setAttribute("aria-live", "polite");
-  feedback.hidden = true;
-  entry.append(label, status, feedback);
+  entry.append(label, status);
   portal.root.appendChild(entry);
 
   const state: GenericQuizSidecar = {
@@ -541,7 +535,6 @@ function ensureGenericEntry(
     contentHost,
     entry,
     status,
-    feedback,
   };
   portal.entries.set(quizRoot, state);
   return { portal, state };
@@ -559,28 +552,6 @@ function setGenericQuizStatus(
   if (!portal || !state) return !text;
   state.status.textContent = text || "";
   state.status.hidden = !text;
-  cleanupGenericEntry(portal, state);
-  return true;
-}
-
-function setGenericQuizFeedback(
-  quizRoot: Element,
-  contentHost: Element,
-  feedback: AssignmentDetailFeedback | null
-): boolean {
-  const current = genericPortals.get(quizRoot.ownerDocument)?.entries.get(quizRoot);
-  const ensured = feedback && !feedback.hidden
-    ? ensureGenericEntry(quizRoot, contentHost)
-    : null;
-  const portal = ensured?.portal ?? genericPortals.get(quizRoot.ownerDocument);
-  const state = ensured?.state ?? current;
-  if (!portal || !state) return !feedback || feedback.hidden;
-  state.feedback.className = "lia-adetails-feedback lia-quiz__feedback";
-  feedback?.appearance?.forEach(name => {
-    if (/^[A-Za-z0-9_-]+$/.test(name)) state.feedback.classList.add(name);
-  });
-  state.feedback.textContent = feedback?.text || "";
-  state.feedback.hidden = !feedback || feedback.hidden;
   cleanupGenericEntry(portal, state);
   return true;
 }
@@ -861,8 +832,10 @@ export function setAssignmentDetailFeedback(
   feedback: AssignmentDetailFeedback | null
 ): boolean {
   const state = sidecarForQuiz(quizRoot, contentHost);
-  if (!state) return setGenericQuizFeedback(quizRoot, contentHost, feedback);
-  setGenericQuizFeedback(quizRoot, contentHost, null);
+  // A missing native feedback node must not become a permanent viewport
+  // notification. The generic portal is reserved for transient Send status;
+  // restored feedback is displayed only where the course provides a local host.
+  if (!state) return true;
   state.feedback.className = "lia-adetails-feedback lia-quiz__feedback";
   feedback?.appearance?.forEach(name => {
     if (/^[A-Za-z0-9_-]+$/.test(name)) state.feedback.classList.add(name);
@@ -910,8 +883,8 @@ export function materializeAssignmentDetailSidecarsForPrint(
     cloneMarker.appendChild(output);
   });
 
-  // A course can use Send or restored native feedback without @ADetails.
-  // Those live in a body-level portal and therefore are not part of `source`;
+  // A course can use transient Send status without @ADetails. Those messages
+  // live in a body-level portal and therefore are not part of `source`;
   // materialize them beside the matching quiz only in this detached clone.
   const portal = genericPortals.get(source.ownerDocument);
   if (!portal) return;
@@ -924,7 +897,6 @@ export function materializeAssignmentDetailSidecarsForPrint(
     const texts = [
       state.entry.querySelector(".lia-freeze-generic-sidecar-label")?.textContent || "",
       state.status.hidden ? "" : normalizeSpace(state.status.textContent || ""),
-      state.feedback.hidden ? "" : normalizeSpace(state.feedback.textContent || ""),
     ].map(normalizeSpace).filter(Boolean);
     if (texts.length <= 1) return;
     const output = clone.ownerDocument.createElement("div");
