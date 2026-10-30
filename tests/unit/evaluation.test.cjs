@@ -990,6 +990,59 @@ test('declares H1 through H6 as printable LiaScript slides', async () => {
     { h: '#7', t: 'Evaluation', vt: 'evaluation' },
   ]);
 });
+test('appends the virtual evaluation after all real sections when declared early', async () => {
+  const { parseDeclaredSlides, parseAbgabeHash, parseSectionCount } = await evaluationPromise;
+  const markdown = [
+    '# Questionnaire',
+    '@Auswertung(Send)',
+    '## Choice',
+    '- [( )] Good',
+    '- [( )] Bad',
+    '## Submit',
+    '@Abgabe',
+  ].join('\n');
+
+  assert.deepEqual(parseDeclaredSlides(markdown), [
+    { h: '#1', t: 'Questionnaire' },
+    { h: '#2', t: 'Choice' },
+    { h: '#3', t: 'Submit' },
+    { h: '#4', t: 'Evaluation', vt: 'evaluation' },
+  ]);
+  assert.equal(parseAbgabeHash(markdown), '#3');
+  assert.equal(parseSectionCount(markdown), 3);
+});
+
+test('keeps horizontal-rule questionnaires in their single real section', async () => {
+  const { parseDeclaredSlides, parseAbgabeHash, parseSectionCount } = await evaluationPromise;
+  const markdown = [
+    '<!-- mode: Presentation -->',
+    '# Reflexion',
+    '@Auswertung(Send)',
+    '',
+    '---',
+    '',
+    '> How was the course?',
+    '- [( )] Good',
+    '- [( )] Bad',
+    '',
+    '---',
+    '',
+    '[[___ ___ ___]]',
+    '',
+    '---',
+    '---',
+    '',
+    '@Abgabe',
+  ].join('\n');
+
+  assert.deepEqual(parseDeclaredSlides(markdown), [
+    { h: '#1', t: 'Reflexion' },
+    { h: '#2', t: 'Evaluation', vt: 'evaluation' },
+  ]);
+  assert.equal(parseAbgabeHash(markdown), '#1');
+  assert.equal(parseSectionCount(markdown), 1);
+});
+
 test('freezes ADetails declarations through the compressed submission-token roundtrip', async () => {
   const {
     buildEvaluationStats,

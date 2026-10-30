@@ -153,8 +153,16 @@ evaluation as the final page.
 
 ### `@Auswertung` — Evaluation slide
 
-Place this at the end of your course. When the teacher opens the freeze link, this slide
-is rendered with all quiz answers scored automatically.
+Add this to your course to enable the evaluation view with quiz answers scored
+automatically. It occupies a separate final position in the Freeze navigation,
+regardless of where the macro appears in the course.
+
+**Previous** returns from the evaluation to the last course slide; **First** opens
+the first course slide. This also works when questions and `@Abgabe` share a single
+section: the questionnaire is position **1 / 2**, and the evaluation is **2 / 2**.
+Use **Next** or **Go to evaluation slide** to return to the evaluation. Markdown
+horizontal rules (`---`) separate content within a section; headings create
+additional LiaScript slides.
 
 Optionally track cheating attempts:
 

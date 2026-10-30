@@ -185,12 +185,10 @@ export function parseDeclaredSlides(courseMarkdown: string): DeclaredSlide[] {
   const slides: DeclaredSlide[] = [];
   let hasEval = false;
   let liaIdx = 0;      // counts ALL H1-H6 headers — matches LiaScript's URL hash numbering
-  let evalLiaIdx = 0;
 
   iterateNonFencedLines(courseMarkdown, line => {
     if (/^\s*@Auswertung(?:\s*\(([^)]*)\))?\s*$/.test(line)) {
       hasEval = true;
-      evalLiaIdx = liaIdx + 1; // evaluation slide is appended after the last real section
     }
     if (/^#{1,6}\s+/.test(line)) {
       liaIdx++;
@@ -202,7 +200,9 @@ export function parseDeclaredSlides(courseMarkdown: string): DeclaredSlide[] {
   });
 
   if (hasEval) {
-    const evalH = "#" + (evalLiaIdx || liaIdx + 1);
+    // @Auswertung may appear on the first section. Its virtual slide must
+    // follow every real section, regardless of where the macro was authored.
+    const evalH = "#" + (liaIdx + 1);
     slides.push({ h: evalH, t: EVALUATION_TITLE, vt: "evaluation" });
   }
 

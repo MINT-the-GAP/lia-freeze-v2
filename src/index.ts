@@ -147,6 +147,10 @@ const freezeLifecycle = getFreezeLifecycleState(window);
 
 let activePayload: SnapshotPayload | null = null;
 let evalContainer: HTMLElement | null = null;
+// Evaluation and course content can share the same real LiaScript section.
+// Track the selected view separately so returning to that section works even
+// when the URL hash does not change (for example, a one-page questionnaire).
+let evaluationViewHash: string | null = null;
 let frozenLink = "";
 let frozenName = "";
 let booted = false;
@@ -892,21 +896,13 @@ function hashIndex(hash: string): number {
   return m ? parseInt(m[1], 10) : 1;
 }
 
-function totalSlides(): number {
-  return declaredSlides.filter(s => !s.vt).length || 1;
-}
-
 function isEvalHash(hash: string): boolean {
   const ev = getEvalSlide();
   if (!ev) return false;
-  if (ev.h === hash) return true;
-
-  // The evaluation is a virtual slide. In shared-link mode it is hosted on
-  // the real Abgabe slide so LiaScript always has a valid slide to render
-  // underneath the overlay.
-  return document.body?.classList.contains("lia-shared-freeze-link") === true
-    && !!abgabeHash
-    && hash === abgabeHash;
+  if (evaluationViewHash === hash) return true;
+  // Older links can assign the evaluation hash to an existing course section.
+  // That collision must never prevent reviewing the actual section.
+  return ev.h === hash && !declaredSlides.some(slide => !slide.vt && slide.h === hash);
 }
 
 // ── Course markdown fetch ─────────────────────────────────────────────────────
@@ -976,6 +972,7 @@ function getOrCreateEvalContainer(): HTMLElement {
 
 function showEvalPlaceholder(): void {
   if (!activePayload) return;
+  evaluationViewHash = getCurrentHash();
   const el = getOrCreateEvalContainer();
   const evalSlide = getEvalSlide();
   el.innerHTML = renderEvaluationSlide({
@@ -1008,9 +1005,11 @@ function showEvalPlaceholder(): void {
       el.style.pointerEvents = "none";
     });
   }
+  refreshFreezeBar();
 }
 
 function hideEvalPlaceholder(): void {
+  evaluationViewHash = null;
   if (evalContainer) evalContainer.style.display = "none";
   for (const sel of ["main.lia-slide__content, .lia-content, main, article", ".lia-submit-box"]) {
     document.querySelectorAll<HTMLElement>(sel).forEach(el => {
@@ -1018,6 +1017,7 @@ function hideEvalPlaceholder(): void {
       el.style.pointerEvents = "";
     });
   }
+  refreshFreezeBar();
 }
 
 // ── Freeze bar ────────────────────────────────────────────────────────────────
@@ -1025,9 +1025,12 @@ function hideEvalPlaceholder(): void {
 function refreshFreezeBar(): void {
   const hash = getCurrentHash();
   const idx = hashIndex(hash);
-  const total = totalSlides();
-  const current = declaredSlides.find(s => s.h === hash);
-  const pos = current ? declaredSlides.indexOf(current) + 1 : idx;
+  const contentSlides = declaredSlides.filter(slide => !slide.vt);
+  const evaluation = getEvalSlide();
+  const reviewingEvaluation = evaluationViewHash === hash;
+  const total = Math.max(1, contentSlides.length) + (evaluation ? 1 : 0);
+  const current = reviewingEvaluation ? evaluation : contentSlides.find(slide => slide.h === hash);
+  const pos = reviewingEvaluation ? total : current ? contentSlides.indexOf(current) + 1 : idx;
   const isFirst = pos <= 1;
   const isLast  = pos >= total;
   setFreezeBarState({
@@ -1036,7 +1039,7 @@ function refreshFreezeBar(): void {
     canFirst: !isFirst,
     canPrev:  !isFirst,
     canNext:  !isLast,
-    canEval:  !!getEvalSlide(),
+    canEval:  !!evaluation && !reviewingEvaluation,
     canPrint: !!activePayload,
   });
 }
@@ -1046,14 +1049,29 @@ function installFrozenNavigation(): void {
   freezeNavigationInstalled = true;
 
   const navSlide = (delta: number): void => {
-    hideEvalPlaceholder();
     const hash = getCurrentHash();
     const visibleSlides = declaredSlides.filter(slide => !slide.vt);
-    const current = visibleSlides.findIndex(slide => slide.h === hash);
+    const current = evaluationViewHash === hash
+      ? visibleSlides.length
+      : visibleSlides.findIndex(slide => slide.h === hash);
+    if (delta > 0 && current >= visibleSlides.length - 1 && getEvalSlide()) {
+      openEvaluation();
+      return;
+    }
+    hideEvalPlaceholder();
     const next = current >= 0
       ? visibleSlides[Math.max(0, Math.min(visibleSlides.length - 1, current + delta))]
       : (delta < 0 ? visibleSlides[0] : visibleSlides[visibleSlides.length - 1]);
     if (next) window.location.hash = next.h;
+    refreshFreezeBar();
+  };
+
+  const openEvaluation = (): void => {
+    if (!getEvalSlide()) return;
+    // Keep a real section beneath the overlay; the extra navigation position
+    // belongs to Freeze and is not a nonexistent LiaScript section.
+    if (abgabeHash) window.location.hash = abgabeHash;
+    showEvalPlaceholder();
   };
 
   installFreezeBar({
@@ -1061,14 +1079,11 @@ function installFrozenNavigation(): void {
       hideEvalPlaceholder();
       const first = declaredSlides.find(slide => !slide.vt);
       if (first) window.location.hash = first.h;
+      refreshFreezeBar();
     },
     onPrev: () => navSlide(-1),
     onNext: () => navSlide(1),
-    onEval: () => {
-      if (!getEvalSlide()) return;
-      if (abgabeHash) window.location.hash = abgabeHash;
-      showEvalPlaceholder();
-    },
+    onEval: openEvaluation,
     onPrint: printFrozenEvaluation,
   });
   refreshFreezeBar();
@@ -1200,31 +1215,6 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
   if (!embeddedEvaluation) await courseDeclarationsPromise;
   if (frozenLanguage) applyCourseLanguage(frozenLanguage);
 
-  function navSlide(delta: number): void {
-    hideEvalPlaceholder();
-    const hash = getCurrentHash();
-    const visibleSlides = declaredSlides.filter(s => !s.vt);
-    const cur = visibleSlides.findIndex(s => s.h === hash);
-    const next = cur >= 0
-      ? visibleSlides[Math.max(0, Math.min(visibleSlides.length - 1, cur + delta))]
-      : (delta < 0 ? visibleSlides[0] : visibleSlides[visibleSlides.length - 1]);
-    if (next) window.location.hash = next.h;
-  }
-
-  installFreezeBar({
-    onFirst: () => { hideEvalPlaceholder(); const first = declaredSlides.find(s => !s.vt); if (first) window.location.hash = first.h; },
-    onPrev:  () => navSlide(-1),
-    onNext:  () => navSlide(+1),
-    onEval:  () => {
-      const ev = getEvalSlide();
-      if (ev) {
-        window.location.hash = abgabeHash || ev.h;
-        showEvalPlaceholder();
-      }
-    },
-    onPrint: printFrozenEvaluation,
-  });
-
   window.addEventListener("hashchange", onHashChange);
 
   setDeferredSendPhase(evalOptions.deferFeedback ? 'review' : 'off');
@@ -1256,7 +1246,12 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
     : (abgabeHash || payload.sh || "#1");
   if (getCurrentHash() !== targetHash) window.location.hash = targetHash;
   scheduleNativeDomRestore(targetHash);
-  if (ev && targetHash === abgabeHash) setTimeout(() => showEvalPlaceholder(), 300);
+  if (ev && targetHash === abgabeHash) {
+    showEvalPlaceholder();
+    setTimeout(() => {
+      if (evaluationViewHash === targetHash && getCurrentHash() === targetHash) showEvalPlaceholder();
+    }, 300);
+  }
 
   refreshFreezeBar();
 
@@ -1274,7 +1269,9 @@ async function bootSharedLinkMode(payload: SnapshotPayload): Promise<void> {
     reapplyContentLock();
     refreshAssignmentDetails();
     refreshFreezeBar();
-    if (ev && currentHash === targetHash) setTimeout(() => showEvalPlaceholder(), 300);
+    // A late source fetch must not reopen evaluation after a same-hash return
+    // to the questionnaire, nor hide an explicitly requested content section.
+    if (evaluationViewHash === currentHash) showEvalPlaceholder();
   }
 }
 
