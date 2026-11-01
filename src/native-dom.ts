@@ -92,6 +92,8 @@ export interface NativeDomTaskState {
   feedback?: NativeDomFeedbackState;
   touched: 0 | 1;
   outcome: NativeDomOutcome;
+  /** Native LiaScript check counter, read from the check-button label. */
+  trial?: number;
   submitted?: 0 | 1;
   rootAppearance?: string[];
 }
@@ -635,6 +637,17 @@ function taskTouched(
   );
 }
 
+/** LiaScript appends the native trial counter to the check-button label. */
+export function readNativeDomTrial(root: Element): number {
+  const label = normalizeSpace(
+    root.querySelector<HTMLElement>(".lia-quiz__check")?.textContent ?? ""
+  );
+  const match = label.match(/(?:^|\s)(\d+)$/);
+  if (!match) return 0;
+  const trial = Number(match[1]);
+  return Number.isSafeInteger(trial) && trial >= 0 ? trial : 0;
+}
+
 function readTask(
   root: Element,
   host: Element,
@@ -669,6 +682,7 @@ function readTask(
   const tiles = kind === "tile" && tileRoot ? readTiles(tileRoot) : undefined;
   const orthography = kind === "orthography" ? readOrthography(root, host) : undefined;
   const outcome = table === "survey" ? "open" : quizOutcome(root);
+  const trial = table === "quiz" ? readNativeDomTrial(root) : 0;
 
   return {
     taskIndex,
@@ -682,6 +696,7 @@ function readTask(
     feedback: readFeedback(root),
     touched: taskTouched(controls, selection, tiles, orthography, outcome) ? 1 : 0,
     outcome,
+    trial,
     submitted: table === "survey" && !root.classList.contains("open") ? 1 : undefined,
     rootAppearance: normalizeNativeDomRootAppearance(
       outcome,
@@ -736,6 +751,7 @@ export function mergeNativeDomTaskSnapshots(
       feedback: mergeFeedback(task.feedback, old.feedback),
       touched: task.touched || old.touched ? 1 : 0,
       outcome,
+      trial: keepOldOutcome ? old.trial : task.trial ?? old.trial,
       submitted: task.submitted ?? old.submitted,
       rootAppearance: normalizeNativeDomRootAppearance(outcome, appearance),
     };
@@ -839,6 +855,7 @@ export function captureNativeDomTaskOutcomeNow(
     outcome,
     statusClasses(root, ROOT_APPEARANCE_CLASSES)
   );
+  const trial = table === 'quiz' ? readNativeDomTrial(root) : 0;
 
   let current: NativeDomTaskState | null;
   if (old) {
@@ -849,6 +866,7 @@ export function captureNativeDomTaskOutcomeNow(
       ...old,
       nativeIndex,
       outcome,
+      trial: Math.max(trial, old.trial ?? 0),
       feedback,
       touched: 1,
       rootAppearance,
@@ -871,6 +889,7 @@ export function captureNativeDomTaskOutcomeNow(
       nativeIndex,
       table,
       outcome,
+      trial,
       feedback,
       touched: 1,
       rootAppearance,
@@ -887,6 +906,10 @@ export function exportNativeDomFallback(): NativeDomFallbackV1 | undefined {
   return JSON.parse(JSON.stringify(tracked)) as NativeDomFallbackV1;
 }
 
+export function clearNativeDomSlide(hash: string): void {
+  if (/^#\d+$/.test(hash)) delete tracked.slides[hash];
+}
+
 export function installNativeDomTracker(options: NativeDomTrackerOptions): () => void {
   trackerOptions = options;
   tracked = { version: 1, slides: {} };
@@ -894,6 +917,14 @@ export function installNativeDomTracker(options: NativeDomTrackerOptions): () =>
   const onInteraction = (event: Event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (target.matches("lia-resetter-host") || target.closest("lia-resetter-host")) {
+      const hash = trackerOptions?.getHash();
+      if (hash) clearNativeDomSlide(hash);
+      scheduleCapture(0);
+      scheduleCapture(90);
+      scheduleCapture(320);
+      return;
+    }
     const host = trackerOptions?.getRoot();
     const siblingQuiz = host ? associatedQuizRoot(target, host) : null;
     if (
@@ -1466,14 +1497,17 @@ export function toSyntheticQuizElements(
     () => null
   );
   quizTasks.forEach(task => {
+    const trial = Number.isSafeInteger(task.trial) && (task.trial ?? 0) >= 0
+      ? task.trial ?? 0
+      : 0;
     if (task.outcome === "correct") {
-      elements[task.nativeIndex] = { solved: 1, score: 1, trial: 1 };
+      elements[task.nativeIndex] = { solved: 1, score: 1, trial: Math.max(1, trial) };
     } else if (task.outcome === "resolved") {
-      elements[task.nativeIndex] = { solved: -1, score: 0, trial: 1 };
+      elements[task.nativeIndex] = { solved: -1, score: 0, trial: Math.max(1, trial) };
     } else if (task.outcome === "wrong") {
-      elements[task.nativeIndex] = { solved: 0, score: 0, trial: 1 };
+      elements[task.nativeIndex] = { solved: 0, score: 0, trial: Math.max(1, trial) };
     } else {
-      elements[task.nativeIndex] = { solved: 0, score: 0, trial: 0 };
+      elements[task.nativeIndex] = { solved: 0, score: 0, trial };
     }
   });
   return elements;

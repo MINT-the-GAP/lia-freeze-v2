@@ -1,6 +1,6 @@
 <!--
 author:   MINT-the-GAP, Martin Lommatzsch, Jihad Hyadi
-version:  1.0.2
+version:  1.0.3
 language: en
 narrator: US English Female
 edit: true
@@ -308,17 +308,23 @@ specification there to preserve all tags. That legacy renderer inserts its own
 badge into native quiz controls; the DOM-ownership guarantee below applies to
 the current Freeze implementation, not to the legacy renderer.
 
-**Read-only learning-state integration (since 1.0.2).**
+**Read-only learning-state integration (review since 1.0.2, live since 1.0.3).**
 
 Optional recommendation extensions can call
 `window.__liaFreezeLearningStateV1__.read()`. The version-1 result contains
 `courseUrl`, `courseVersion` and `phase` (`unavailable`, `live`, `collect`,
 `grading`, or `review`). Only `review` includes detached native quiz/survey
 results, evaluation-only fallback results and current manual point corrections.
-The bridge never grades, captures, restores, creates a submission or registers
-additional quiz listeners. Initialization and deferred Send phases expose no
-results. Consumers must validate course identity and phase; older Freeze
-versions do not provide this cross-slide correction interface.
+Since 1.0.3, `live` additionally includes the detached `liveState` collected by
+Freeze's existing cross-slide DOM tracker. It contains only slide/task indexes,
+task type, outcome and LiaScript's native trial number. Controls, entered
+answers, feedback and submitted values are deliberately omitted. A Resetter
+interaction clears the corresponding live snapshot immediately.
+
+The bridge never grades, restores, creates a submission or registers additional
+quiz listeners. Initialization and deferred Send phases expose no results.
+Consumers must validate course identity and phase; older Freeze versions do not
+provide this live cross-slide interface.
 
 **DOM ownership and the internal ADetails host.**
 

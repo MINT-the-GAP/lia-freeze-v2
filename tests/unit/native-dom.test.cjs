@@ -153,6 +153,22 @@ test('maps DOM outcomes to the existing evaluation element contract', async () =
   ]);
 });
 
+test('reads and preserves LiaScript native trial counts from the check label', async () => {
+  const { readNativeDomTrial, toSyntheticQuizElements } = await nativeDomPromise;
+  withNativeControls(`
+    <div class="lia-quiz"><button class="lia-quiz__check">Prüfen 13</button></div>
+  `, document => {
+    assert.equal(readNativeDomTrial(document.querySelector('.lia-quiz')), 13);
+  });
+  assert.deepEqual(toSyntheticQuizElements([
+    { ...task(0, 'correct'), trial: 13 },
+    { ...task(1, 'wrong'), trial: 4 },
+  ]), [
+    { solved: 1, score: 1, trial: 13 },
+    { solved: 0, score: 0, trial: 4 },
+  ]);
+});
+
 test('keeps entered text when a solved inline quiz rerenders without controls', async () => {
   const { mergeNativeDomTaskSnapshots } = await nativeDomPromise;
   const beforeCheck = {

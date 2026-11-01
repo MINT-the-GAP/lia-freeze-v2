@@ -2211,6 +2211,7 @@ if (claimFreezeBoot(freezeLifecycle)) {
         courseDocumentIdentity.courseVersion,
       ),
       payload: activePayload,
+      liveState: exportNativeDomFallback(),
       manualAwards: getManualAwardValues(),
     };
   });

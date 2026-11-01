@@ -11,6 +11,8 @@ const modulePromise = import('data:text/javascript;base64,' + Buffer.from(compil
 const context = () => ({ ready: true, grading: false, deferFeedback: false,
   courseUrl: 'https://example.test/course.md', courseVersion: '2.3.4',
   payload: { n: 'private', sec: { tab: 5 }, s: [{ h: '#2', quiz: { 1: [{ solved: 1 }] }, code: { private: true } }] },
+  liveState: { version: 1, slides: { '#2': [{ taskIndex: 0, nativeIndex: 0,
+    table: 'quiz', outcome: 'correct', trial: 13, controls: [{ value: 'private answer' }] }] } },
   manualAwards: { '#2::task::1': '0,5' },
 });
 
@@ -32,6 +34,19 @@ test('never assigns the current source version to a legacy frozen payload', asyn
   assert.equal(resolveLearningCourseVersion(false, undefined, '3.0.0'), '3.0.0');
   assert.equal(resolveLearningCourseVersion(true, '2.4.1', '3.0.0'), '2.4.1');
   assert.equal(resolveLearningCourseVersion(true, undefined, '3.0.0'), '');
+});
+
+test('live mode exposes only detached outcome metadata and never learner answers', async () => {
+  const { readLearningSnapshot } = await modulePromise;
+  const input = { ...context(), payload: null };
+  const result = readLearningSnapshot(input);
+  assert.equal(result.phase, 'live');
+  assert.deepEqual(result.liveState, { version: 1, slides: { '#2': [{
+    taskIndex: 0, nativeIndex: 0, table: 'quiz', outcome: 'correct', trial: 13,
+  }] } });
+  assert.equal(JSON.stringify(result).includes('private answer'), false);
+  result.liveState.slides['#2'][0].trial = 99;
+  assert.equal(input.liveState.slides['#2'][0].trial, 13);
 });
 
 test('review exposes detached results and current manual corrections without unrelated submission data', async () => {
